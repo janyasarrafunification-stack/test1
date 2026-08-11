@@ -19,103 +19,103 @@
       "protocol": "vless reality"
     },
     {
-      "name": "🚀 🇺🇸 США",
-      "ip": "82.198.246.37",
-      "ping": 8,
-      "speed_mbps": 171.69,
-      "score": 44.1,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "82.198.246.250",
-      "ping": 8,
-      "speed_mbps": 171.32,
-      "score": 44.0,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "165.140.216.141",
-      "ping": 2,
-      "speed_mbps": 247.16,
-      "score": 43.9,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "15.204.97.219",
-      "ping": 15,
-      "speed_mbps": 131.35,
-      "score": 58.9,
-      "country": "US",
-      "protocol": "vless reality"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "82.198.246.97",
-      "ping": 8,
-      "speed_mbps": 175.06,
-      "score": 43.8,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "⚡⚡ 🇺🇸 США",
-      "ip": "70.39.197.13",
-      "ping": 10,
-      "speed_mbps": 6.15,
-      "score": 40.9,
-      "country": "US",
-      "protocol": "vless reality"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "182.16.61.3",
-      "ping": 13,
-      "speed_mbps": 24.05,
-      "score": 53.8,
-      "country": "US",
+      "name": "🚀 🇩🇪 Германия",
+      "ip": "3.65.145.222",
+      "ping": 148,
+      "speed_mbps": 17.56,
+      "score": 50.1,
+      "country": "DE",
       "protocol": "vless none"
     },
     {
-      "name": "🚀 🇺🇸 США",
-      "ip": "104.18.35.15",
-      "ping": 1,
-      "speed_mbps": 183.87,
+      "name": "🚀 🇳🇱 Нидерланды",
+      "ip": "117.55.203.250",
+      "ping": 148,
+      "speed_mbps": 14.57,
+      "score": 53.9,
+      "country": "NL",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇬🇧 Великобритания",
+      "ip": "164.37.109.189",
+      "ping": 151,
+      "speed_mbps": 16.14,
+      "score": 53.9,
+      "country": "GB",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇬🇧 Великобритания",
+      "ip": "164.37.105.38",
+      "ping": 150,
+      "speed_mbps": 16.48,
+      "score": 53.9,
+      "country": "GB",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇫🇷 Франция",
+      "ip": "45.192.2.42",
+      "ping": 148,
+      "speed_mbps": 16.56,
+      "score": 63.8,
+      "country": "FR",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇳🇱 Нидерланды",
+      "ip": "94.249.225.79",
+      "ping": 148,
+      "speed_mbps": 16.93,
       "score": 53.7,
-      "country": "US",
+      "country": "NL",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇳🇱 Нидерланды",
+      "ip": "94.249.225.83",
+      "ping": 148,
+      "speed_mbps": 16.82,
+      "score": 53.6,
+      "country": "NL",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇳🇱 Нидерланды",
+      "ip": "85.155.98.40",
+      "ping": 153,
+      "speed_mbps": 16.34,
+      "score": 48.5,
+      "country": "NL",
       "protocol": "vless tls"
     },
     {
-      "name": "🚀 🇺🇸 США",
-      "ip": "31.58.50.200",
-      "ping": 2,
-      "speed_mbps": 62.91,
-      "score": 57.5,
-      "country": "US",
+      "name": "🚀 🇳🇱 Нидерланды",
+      "ip": "85.155.98.127",
+      "ping": 153,
+      "speed_mbps": 14.7,
+      "score": 48.4,
+      "country": "NL",
+      "protocol": "vless tls"
+    },
+    {
+      "name": "⚡ 🇳🇱 Нидерланды",
+      "ip": "netherlands1.banovano.space",
+      "ping": 665,
+      "speed_mbps": 3.92,
+      "score": 29.0,
+      "country": "NL",
       "protocol": "vless reality"
     },
     {
-      "name": "🚀 🇺🇸 США",
-      "ip": "104.18.28.234",
-      "ping": 1,
-      "speed_mbps": 46.55,
-      "score": 51.0,
-      "country": "US",
-      "protocol": "vless none"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "cf.levikogjgfdd.ir",
-      "ping": 3,
-      "speed_mbps": 47.44,
-      "score": 50.7,
-      "country": "US",
-      "protocol": "vless none"
+      "name": "🚀 🇩🇪 Германия",
+      "ip": "217.60.68.91",
+      "ping": 155,
+      "speed_mbps": 14.63,
+      "score": 58.3,
+      "country": "DE",
+      "protocol": "vless tls"
     }
   ]
 }

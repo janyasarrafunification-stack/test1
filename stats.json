@@ -1,121 +1,121 @@
 {
   "servers": [
     {
-      "name": "💎 🇫🇮  V2A / Финляндия | Ping: 147ms | Speed: 0.0Mbps",
+      "name": "💎 🇫🇮  V2A / Финляндия | Ping: 122ms | Speed: 0.0Mbps",
       "ip": "87.58.204.248",
-      "ping": 147,
+      "ping": 122,
       "speed_mbps": 0.0,
       "score": 0,
       "country": "FI",
       "protocol": "vless reality"
     },
     {
-      "name": "💎 🇫🇮  V2A / Финляндия Warp | Ping: 149ms | Speed: 0.0Mbps",
+      "name": "💎 🇫🇮  V2A / Финляндия Warp | Ping: 121ms | Speed: 0.0Mbps",
       "ip": "87.58.204.248",
-      "ping": 149,
+      "ping": 121,
       "speed_mbps": 0.0,
       "score": 0,
       "country": "FI",
       "protocol": "vless reality"
     },
     {
-      "name": "🚀 🇺🇸 США | Ping: 39ms | Speed: 67.95Mbps",
-      "ip": "82.198.246.37",
-      "ping": 39,
-      "speed_mbps": 67.95,
-      "score": 43.7,
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 220.51Mbps",
+      "ip": "162.159.36.5",
+      "ping": 2,
+      "speed_mbps": 220.51,
+      "score": 54.3,
+      "country": "US",
+      "protocol": "vless none"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 51.6Mbps",
+      "ip": "132.145.200.43",
+      "ping": 2,
+      "speed_mbps": 51.6,
+      "score": 44.2,
       "country": "US",
       "protocol": "vmess none"
     },
     {
-      "name": "🚀 🇺🇸 США | Ping: 40ms | Speed: 66.31Mbps",
-      "ip": "82.198.246.97",
-      "ping": 40,
-      "speed_mbps": 66.31,
-      "score": 43.6,
+      "name": "🚀 🇺🇸 США | Ping: 7ms | Speed: 209.28Mbps",
+      "ip": "169.40.42.182",
+      "ping": 7,
+      "speed_mbps": 209.28,
+      "score": 59.2,
       "country": "US",
-      "protocol": "vmess none"
+      "protocol": "vless reality"
     },
     {
-      "name": "🚀 🇨🇦 Канада | Ping: 36ms | Speed: 34.61Mbps",
-      "ip": "23.162.200.198",
-      "ping": 36,
-      "speed_mbps": 34.61,
-      "score": 43.6,
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 212.87Mbps",
+      "ip": "188.114.97.6",
+      "ping": 2,
+      "speed_mbps": 212.87,
+      "score": 54.2,
+      "country": "US",
+      "protocol": "vless none"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 3ms | Speed: 193.73Mbps",
+      "ip": "40.160.68.55",
+      "ping": 3,
+      "speed_mbps": 193.73,
+      "score": 54.2,
+      "country": "US",
+      "protocol": "vless none"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 8ms | Speed: 155.81Mbps",
+      "ip": "169.40.42.75",
+      "ping": 8,
+      "speed_mbps": 155.81,
+      "score": 59.2,
+      "country": "US",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 223.97Mbps",
+      "ip": "fuckfangbinxing.pusytroller.gq",
+      "ping": 2,
+      "speed_mbps": 223.97,
+      "score": 54.2,
+      "country": "US",
+      "protocol": "vless none"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 18.68Mbps",
+      "ip": "172.64.152.241",
+      "ping": 2,
+      "speed_mbps": 18.68,
+      "score": 54.1,
+      "country": "US",
+      "protocol": "vless none"
+    },
+    {
+      "name": "🚀 🇨🇦 Канада | Ping: 17ms | Speed: 116.4Mbps",
+      "ip": "216.152.147.28",
+      "ping": 17,
+      "speed_mbps": 116.4,
+      "score": 59.1,
       "country": "CA",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "⚡⚡ 🇺🇸 США | Ping: 38ms | Speed: 9.59Mbps",
-      "ip": "82.198.246.233",
-      "ping": 38,
-      "speed_mbps": 9.59,
-      "score": 42.3,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США | Ping: 37ms | Speed: 69.63Mbps",
-      "ip": "82.198.246.250",
-      "ping": 37,
-      "speed_mbps": 69.63,
-      "score": 43.5,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США | Ping: 50ms | Speed: 53.16Mbps",
-      "ip": "165.140.216.142",
-      "ping": 50,
-      "speed_mbps": 53.16,
-      "score": 42.9,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США | Ping: 50ms | Speed: 40.76Mbps",
-      "ip": "129.146.77.248",
-      "ping": 50,
-      "speed_mbps": 40.76,
-      "score": 42.3,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США | Ping: 16ms | Speed: 39.61Mbps",
-      "ip": "cf.130519.xyz",
-      "ping": 16,
-      "speed_mbps": 39.61,
-      "score": 51.9,
-      "country": "US",
-      "protocol": "vless tls"
-    },
-    {
-      "name": "🚀 🇬🇧 Великобритания | Ping: 105ms | Speed: 20.45Mbps",
-      "ip": "57.129.132.223",
-      "ping": 105,
-      "speed_mbps": 20.45,
-      "score": 50.4,
-      "country": "GB",
-      "protocol": "vless none"
-    },
-    {
-      "name": "⚡ 🇮🇹 Италия | Ping: 123ms | Speed: 3.53Mbps",
-      "ip": "204.216.216.23",
-      "ping": 123,
-      "speed_mbps": 3.53,
-      "score": 28.2,
-      "country": "IT",
-      "protocol": "vless none"
-    },
-    {
-      "name": "🚀 🇳🇱 Нидерланды | Ping: 114ms | Speed: 21.75Mbps",
-      "ip": "51.158.206.103",
-      "ping": 114,
-      "speed_mbps": 21.75,
-      "score": 55.3,
-      "country": "NL",
       "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 250.24Mbps",
+      "ip": "104.18.185.26",
+      "ping": 2,
+      "speed_mbps": 250.24,
+      "score": 54.1,
+      "country": "US",
+      "protocol": "vless none"
+    },
+    {
+      "name": "🚀 🇺🇸 США | Ping: 2ms | Speed: 162.83Mbps",
+      "ip": "67.220.95.3",
+      "ping": 2,
+      "speed_mbps": 162.83,
+      "score": 44.1,
+      "country": "US",
+      "protocol": "vmess none"
     }
   ]
 }

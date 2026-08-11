@@ -3,7 +3,7 @@
     {
       "name": "💎 🇫🇮  V2A / Финляндия",
       "ip": "87.58.204.248",
-      "ping": 132,
+      "ping": 182,
       "speed_mbps": 0.0,
       "score": 0,
       "country": "FI",
@@ -12,7 +12,7 @@
     {
       "name": "💎 🇫🇮  V2A / Финляндия Warp",
       "ip": "87.58.204.248",
-      "ping": 133,
+      "ping": 178,
       "speed_mbps": 0.0,
       "score": 0,
       "country": "FI",
@@ -20,100 +20,100 @@
     },
     {
       "name": "🚀 🇺🇸 США",
-      "ip": "169.40.42.16",
-      "ping": 20,
-      "speed_mbps": 89.31,
-      "score": 58.7,
+      "ip": "82.198.246.37",
+      "ping": 8,
+      "speed_mbps": 171.69,
+      "score": 44.1,
+      "country": "US",
+      "protocol": "vmess none"
+    },
+    {
+      "name": "🚀 🇺🇸 США",
+      "ip": "82.198.246.250",
+      "ping": 8,
+      "speed_mbps": 171.32,
+      "score": 44.0,
+      "country": "US",
+      "protocol": "vmess none"
+    },
+    {
+      "name": "🚀 🇺🇸 США",
+      "ip": "165.140.216.141",
+      "ping": 2,
+      "speed_mbps": 247.16,
+      "score": 43.9,
+      "country": "US",
+      "protocol": "vmess none"
+    },
+    {
+      "name": "🚀 🇺🇸 США",
+      "ip": "15.204.97.219",
+      "ping": 15,
+      "speed_mbps": 131.35,
+      "score": 58.9,
       "country": "US",
       "protocol": "vless reality"
     },
     {
       "name": "🚀 🇺🇸 США",
-      "ip": "82.198.246.250",
-      "ping": 49,
-      "speed_mbps": 50.15,
-      "score": 43.3,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "82.198.246.233",
-      "ping": 49,
-      "speed_mbps": 51.91,
-      "score": 43.3,
-      "country": "US",
-      "protocol": "vmess none"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
       "ip": "82.198.246.97",
-      "ping": 49,
-      "speed_mbps": 52.31,
-      "score": 43.2,
+      "ping": 8,
+      "speed_mbps": 175.06,
+      "score": 43.8,
       "country": "US",
       "protocol": "vmess none"
     },
     {
+      "name": "⚡⚡ 🇺🇸 США",
+      "ip": "70.39.197.13",
+      "ping": 10,
+      "speed_mbps": 6.15,
+      "score": 40.9,
+      "country": "US",
+      "protocol": "vless reality"
+    },
+    {
       "name": "🚀 🇺🇸 США",
-      "ip": "104.18.42.98",
-      "ping": 2,
-      "speed_mbps": 108.77,
-      "score": 53.2,
+      "ip": "182.16.61.3",
+      "ping": 13,
+      "speed_mbps": 24.05,
+      "score": 53.8,
       "country": "US",
       "protocol": "vless none"
     },
     {
       "name": "🚀 🇺🇸 США",
-      "ip": "172.64.146.116",
-      "ping": 2,
-      "speed_mbps": 93.79,
-      "score": 53.0,
+      "ip": "104.18.35.15",
+      "ping": 1,
+      "speed_mbps": 183.87,
+      "score": 53.7,
       "country": "US",
       "protocol": "vless tls"
     },
     {
       "name": "🚀 🇺🇸 США",
-      "ip": "15.204.97.214",
-      "ping": 50,
-      "speed_mbps": 50.5,
-      "score": 57.7,
-      "country": "US",
-      "protocol": "vless reality"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "169.40.42.173",
-      "ping": 20,
-      "speed_mbps": 77.7,
-      "score": 57.4,
-      "country": "US",
-      "protocol": "vless reality"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "193.233.205.117",
-      "ping": 24,
-      "speed_mbps": 69.95,
-      "score": 67.2,
-      "country": "US",
-      "protocol": "vless reality"
-    },
-    {
-      "name": "🚀 🇺🇸 США",
-      "ip": "172.67.75.172",
+      "ip": "31.58.50.200",
       "ping": 2,
-      "speed_mbps": 66.81,
-      "score": 51.9,
+      "speed_mbps": 62.91,
+      "score": 57.5,
+      "country": "US",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇺🇸 США",
+      "ip": "104.18.28.234",
+      "ping": 1,
+      "speed_mbps": 46.55,
+      "score": 51.0,
       "country": "US",
       "protocol": "vless none"
     },
     {
       "name": "🚀 🇺🇸 США",
-      "ip": "104.26.1.195",
-      "ping": 2,
-      "speed_mbps": 53.42,
-      "score": 51.8,
+      "ip": "cf.levikogjgfdd.ir",
+      "ping": 3,
+      "speed_mbps": 47.44,
+      "score": 50.7,
       "country": "US",
       "protocol": "vless none"
     }

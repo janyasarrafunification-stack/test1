@@ -2,18 +2,17 @@ name: Auto Update VPN Subscription
 
 on:
   schedule:
-    # Запуск каждые 30 минут без очередей и задержек
+    # :07 и :37 каждой минуты — в UTC (GitHub использует UTC, не локальное время)
     - cron: '7,37 * * * *'
-  workflow_dispatch: # Кнопка для ручного запуска
+  workflow_dispatch:
 
 permissions:
   contents: write
-  actions: write # Разрешение на удаление старых логов и истории запусков
+  actions: write
 
 jobs:
   update-vpn:
     runs-on: ubuntu-latest
-
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
@@ -48,26 +47,27 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Очищаем временные файлы
           rm -f last_update.txt vpn_scanner.log logs/*.log 2>/dev/null || true
-          
+
           # Сохраняем ТОЛЬКО файл подписки и статистику
           git add FL1PVPN stats.json
-          
+
           COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")
-          
+
           git commit -m "🚀 Update: $COUNT Active Servers | $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "Нет изменений"
           git stash --include-untracked
           git pull --rebase origin main || git pull --rebase origin master || true
           git push origin HEAD
           echo "✅ Файл FL1PVPN успешно обновлен!"
 
-      # ─── АВТОМАТИЧЕСКАЯ ОЧИСТКА ИСТОРИИ WORKFLOW (Удаление старых логов) ───
+      # ─── АВТОМАТИЧЕСКАЯ ОЧИСТКА ИСТОРИИ WORKFLOW ───
       - name: 🧹 Clean old workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "Очистка старых запусков Workflow..."
+          # Подставь реальное имя файла воркфлоу, если оно не update.yml
           gh run list --workflow=update.yml --json databaseId -q '.[1:].databaseId' 2>/dev/null | xargs -I {} gh run delete {} 2>/dev/null || true
           echo "✅ Старые логи и история запусков очищены!"

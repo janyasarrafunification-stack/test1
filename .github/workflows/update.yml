@@ -4,10 +4,11 @@ on:
   schedule:
     # Автозапуск каждые 30 минут
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Кнопка ручного запуска
+  workflow_dispatch: # Кнопка для ручного запуска
 
 permissions:
   contents: write
+  actions: write # Разрешение на удаление старых логов и истории запусков
 
 jobs:
   update-vpn:
@@ -34,46 +35,39 @@ jobs:
       - name: ⚙️ Setup Xray Core
         run: |
           if [ ! -f ./xray ] || [ ! -x ./xray ]; then
-            echo "Скачивание ядра Xray Core..."
             curl -sL https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
             unzip -o xray.zip xray geoip.dat geosite.dat 2>/dev/null || true
             rm -f xray.zip
           fi
           chmod +x ./xray
-          ./xray version
 
-      - name: 🚀 Run VPN Scanner (Тестирование серверов)
+      - name: 🚀 Run VPN Scanner
         run: python main.py
 
-      - name: 📝 Update timestamp and commit results
+      - name: 📤 Commit ONLY FL1PVPN & stats.json
         run: |
-          COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")
-          NOW_UTC=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
-          
-          # Записываем метку времени последней проверки
-          echo "Последнее сканирование: $NOW_UTC" > last_update.txt
-          echo "Рабочих серверов: $COUNT" >> last_update.txt
-          
-          # Настройка Git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Добавляем все измененные файлы
-          git add -A
+          # Очищаем временные файлы
+          rm -f last_update.txt vpn_scanner.log logs/*.log 2>/dev/null || true
           
-          # Коммитим и пушим в репозиторий
-          git commit -m "🚀 Update: $COUNT Servers | $NOW_UTC" || echo "Коммит уже существует"
+          # Сохраняем ТОЛЬКО файл подписки и статистику
+          git add FL1PVPN stats.json
+          
+          COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")
+          
+          git commit -m "🚀 Update: $COUNT Active Servers | $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "Нет изменений"
+          git stash --include-untracked
           git pull --rebase origin main || git pull --rebase origin master || true
           git push origin HEAD
-          echo "✅ Результаты успешно отправлены в ваш репозиторий!"
+          echo "✅ Файл FL1PVPN успешно обновлен!"
 
-      # Прикрепляем файл подписки прямо к отчету в Actions для мгновенного скачивания
-      - name: 📦 Upload FL1PVPN as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: FL1PVPN-Config-File
-          path: |
-            FL1PVPN
-            stats.json
-            last_update.txt
-          retention-days: 7
+      # ─── АВТОМАТИЧЕСКАЯ ОЧИСТКА ИСТОРИИ WORKFLOW (Удаление старых логов) ───
+      - name: 🧹 Clean old workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Очистка старых запусков Workflow..."
+          gh run list --workflow=update.yml --json databaseId -q '.[1:].databaseId' 2>/dev/null | xargs -I {} gh run delete {} 2>/dev/null || true
+          echo "✅ Старые логи и история запусков очищены!"

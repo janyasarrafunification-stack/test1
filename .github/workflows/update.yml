@@ -2,9 +2,9 @@ name: Auto Update VPN Subscription
 
 on:
   schedule:
-    # Запуск каждые 30 минут автоматически
+    # Автозапуск каждые 30 минут
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Кнопка для ручного запуска в любое время
+  workflow_dispatch: # Кнопка ручного запуска
 
 permissions:
   contents: write
@@ -40,7 +40,6 @@ jobs:
             rm -f xray.zip
           fi
           chmod +x ./xray
-          ./xray version
 
       - name: 🚀 Run VPN Scanner (Тестирование серверов)
         run: python main.py
@@ -50,16 +49,27 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Добавляем полученные рабочие конфиги и статистику
-          git add FL1PVPN stats.json history.json reserve_pool.json logs/ 2>/dev/null || true
+          # Добавляем обновленные файлы
+          git add -A
+          
+          COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "?")
           
           if git diff --staged --quiet; then
-            echo "Все серверы проверены, новых изменений нет."
+            echo "Файлы идентичны предыдущему запуску."
           else
-            COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "?")
             git commit -m "🚀 Auto-Update: $COUNT Active Servers | $(date -u +'%Y-%m-%d %H:%M UTC')"
             git stash --include-untracked
             git pull --rebase origin main || git pull --rebase origin master || true
             git push origin HEAD
-            echo "✅ Файл FL1PVPN успешно обновлен в репозитории!"
+            echo "✅ Репозиторий успешно обновлен!"
           fi
+
+      # Прикрепляем готовый файл подписки прямо к отчету запуска
+      - name: 📦 Upload FL1PVPN as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FL1PVPN-Subscription
+          path: |
+            FL1PVPN
+            stats.json
+          retention-days: 7

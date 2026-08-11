@@ -40,36 +40,40 @@ jobs:
             rm -f xray.zip
           fi
           chmod +x ./xray
+          ./xray version
 
       - name: 🚀 Run VPN Scanner (Тестирование серверов)
         run: python main.py
 
-      - name: 📤 Commit and Push results to GitHub
+      - name: 📝 Update timestamp and commit results
         run: |
+          COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")
+          NOW_UTC=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          
+          # Записываем метку времени последней проверки
+          echo "Последнее сканирование: $NOW_UTC" > last_update.txt
+          echo "Рабочих серверов: $COUNT" >> last_update.txt
+          
+          # Настройка Git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Добавляем обновленные файлы
+          # Добавляем все измененные файлы
           git add -A
           
-          COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "?")
-          
-          if git diff --staged --quiet; then
-            echo "Файлы идентичны предыдущему запуску."
-          else
-            git commit -m "🚀 Auto-Update: $COUNT Active Servers | $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git stash --include-untracked
-            git pull --rebase origin main || git pull --rebase origin master || true
-            git push origin HEAD
-            echo "✅ Репозиторий успешно обновлен!"
-          fi
+          # Коммитим и пушим в репозиторий
+          git commit -m "🚀 Update: $COUNT Servers | $NOW_UTC" || echo "Коммит уже существует"
+          git pull --rebase origin main || git pull --rebase origin master || true
+          git push origin HEAD
+          echo "✅ Результаты успешно отправлены в ваш репозиторий!"
 
-      # Прикрепляем готовый файл подписки прямо к отчету запуска
+      # Прикрепляем файл подписки прямо к отчету в Actions для мгновенного скачивания
       - name: 📦 Upload FL1PVPN as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FL1PVPN-Subscription
+          name: FL1PVPN-Config-File
           path: |
             FL1PVPN
             stats.json
+            last_update.txt
           retention-days: 7

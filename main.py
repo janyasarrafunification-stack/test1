@@ -132,6 +132,16 @@ def get_accurate_ping(ip, port, attempts=3):
         
     return int(sum(latencies) / len(latencies))
 
+# --- ЭТАП 0: ДЕШЁВЫЙ ПИНГ-ФИЛЬТР (TCP) ---
+# Быстро отсеивает мёртвые серверы ДО запуска дорогой проверки через Xray.
+# Возвращает сервер, если он отвечает, иначе None.
+def ping_filter(server):
+    try:
+        with socket.create_connection((server['ip'], server['port']), timeout=TCP_TIMEOUT):
+            return server
+    except:
+        return None
+
 def install_xray_core():
     import zipfile, io
     desired_version = "1.8.24" # Обновлено для поддержки xhttp/httpupgrade/splithttp
@@ -612,6 +622,20 @@ def main():
         
     logger.info(f"🔍 Уникальных конфигов для глубокой проверки: {len(unique_configs)}")
 
+    # ================== STAGE 0 ==================
+    # Дешёвый TCP-пинг-фильтр: отсеиваем мёртвые серверы ДО дорогого Xray-теста.
+    # Быстро (socket connect) и параллельно, без запуска Xray.
+    logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр (TCP). Кандидатов: {len(unique_configs)}...")
+    alive_configs = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS * 2) as executor:
+        futures = [executor.submit(ping_filter, s) for s in unique_configs]
+        for f in concurrent.futures.as_completed(futures):
+            res = f.result()
+            if res:
+                alive_configs.append(res)
+    unique_configs = alive_configs
+    logger.info(f"✅ После пинга выжило: {len(unique_configs)}. Далее — проверка Xray+скорость только для них.")
+
     # ================== STAGE 1 ==================
     tested_servers = []
     logger.info(f"⚡ ЭТАП 1: Массовое отсеивание (Real Ping). Workers: {MAX_WORKERS}...")
@@ -623,8 +647,9 @@ def main():
                 tested_servers.append(res)
                 logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP Пинг: {res['real_delay']}ms | Скорость: {res['speed_mbps']} Mbps")
 
+    # Отбираем в итоговый файл ТОЛЬКО серверы, прошедшие пинг И имеющие скорость >= порога.
+    # (по выбору: без спец-включения РФ/СНГ)
     pool_global = []
-    pool_ru_cis = []
     
     for s in tested_servers:
         node_id = f"{s['ip']}:{s['port']}"
@@ -633,23 +658,19 @@ def main():
         if node_id not in history_data:
             history_data[node_id] = {"streak": 0, "failures": 0, "last_seen": str(datetime.now().date())}
         
-        if s['speed_mbps'] >= SPEED_HARD_LIMIT or s['country'] in CIS_COUNTRIES:
+        if s['speed_mbps'] >= SPEED_HARD_LIMIT:
             history_data[node_id]["streak"] += 1
             history_data[node_id]["failures"] = max(0, history_data[node_id]["failures"] - 1)
         else:
             history_data[node_id]["failures"] += 1
             history_data[node_id]["streak"] = 0
 
-        if s['country'] in CIS_COUNTRIES:
-            pool_ru_cis.append(s)
-        else:
-            if s['speed_mbps'] >= SPEED_HARD_LIMIT: 
-                pool_global.append(s)
+        if s['speed_mbps'] >= SPEED_HARD_LIMIT:
+            pool_global.append(s)
 
     save_history(history_data)
 
     # Приоритет сортировки: сначала наименьший пинг, затем наивысший скор (скорость/стабильность)
-    pool_ru_cis.sort(key=lambda x: (x.get('real_delay', 9999), -x.get('score', 0)))
     pool_global.sort(key=lambda x: (x.get('real_delay', 9999), -x.get('score', 0)))
 
     final_parsed_selection = []

@@ -32,8 +32,7 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS_mobile.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-checked.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
-
-"https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt"  
+    "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt"  
 ]
 
 XRAY_BIN = "./xray"
@@ -41,12 +40,13 @@ OUTPUT_FILE = 'FL1PVPN'
 JSON_FILE = 'stats.json'
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
+LOCAL_SOURCE_FILE = 'my_source'
 MAX_WORKERS = 40
-TCP_TIMEOUT = 1.0
-REAL_TEST_TIMEOUT = 5.0
+TCP_TIMEOUT = 2.5           # Увеличено с 1.0 до 2.5 сек, чтобы удаленные серверы успевали ответить
+REAL_TEST_TIMEOUT = 6.0     # Таймаут проверки через Xray
 SPEED_TEST_TIMEOUT = 6.0
-TOTAL_SERVERS_WANTED = 10
-SPEED_HARD_LIMIT = 1.5
+TOTAL_SERVERS_WANTED = 15   # Количество отбираемых лучших серверов в подписку
+SPEED_HARD_LIMIT = 1.0      # Минимальная скорость для отбора (Mbps)
 
 # ВАЖНО: Добавлена поддержка "urls" (списка) для ротации.
 HARDCODED_NODES = [
@@ -460,7 +460,7 @@ def deep_verify(server):
             return None 
             
         # YouTube 204 Test
-        yt_resp = requests.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=3.0)
+        yt_resp = requests.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=4.5)
         if yt_resp.status_code == 204:
             youtube_ok = True
         else:
@@ -587,12 +587,28 @@ def main():
                 else: parsed = parse_vmess(link)
                 if parsed: all_configs.append(parsed)
 
+    # Загружаем серверы из локального файла my_source
+    if os.path.exists(LOCAL_SOURCE_FILE):
+        logger.info(f"📁 Чтение локального файла {LOCAL_SOURCE_FILE}...")
+        try:
+            with open(LOCAL_SOURCE_FILE, "r", encoding="utf-8", errors="ignore") as lf:
+                local_links = extract_links(lf.read())
+                logger.info(f"📁 Найдено {len(local_links)} серверов в {LOCAL_SOURCE_FILE}")
+                for link in local_links:
+                    parsed = None
+                    if link.lower().startswith("vless"): parsed = parse_vless(link)
+                    elif link.lower().startswith("trojan"): parsed = parse_trojan(link)
+                    else: parsed = parse_vmess(link)
+                    if parsed: all_configs.append(parsed)
+        except Exception as e:
+            logger.error(f"❌ Ошибка чтения {LOCAL_SOURCE_FILE}: {e}")
+
     unique_configs = list({f"{c['ip']}:{c['port']}": c for c in all_configs}.values())
     
-    # ИСПРАВЛЕНИЕ СКОРОСТИ: Лимитируем количество серверов для теста, чтобы не виснуть на 7 минут
-    if len(unique_configs) > 150:
-        logger.info(f"⚡ Найдено слишком много серверов ({len(unique_configs)}). Ограничиваем до 150 для скорости...")
-        unique_configs = unique_configs[:150]
+    # Расширенный пул для проверки (до 450 серверов)
+    if len(unique_configs) > 450:
+        logger.info(f"⚡ Найдено {len(unique_configs)} уникальных серверов. Берем топ-450 для проверки...")
+        unique_configs = unique_configs[:450]
         
     logger.info(f"🔍 Уникальных конфигов для глубокой проверки: {len(unique_configs)}")
 

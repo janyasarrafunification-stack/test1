@@ -618,11 +618,8 @@ def main():
 
     unique_configs = list({f"{c['ip']}:{c['port']}": c for c in all_configs}.values())
     
-    # Расширенный пул для проверки (до 450 серверов)
-    if len(unique_configs) > 450:
-        logger.info(f"⚡ Найдено {len(unique_configs)} уникальных серверов. Берем топ-450 для проверки...")
-        unique_configs = unique_configs[:450]
-        
+    # НЕ ограничиваем пул: берём ВСЕ уникальные серверы.
+    # Сначала дешёвый пинг-фильтр отсеет мёртвых, и только выживших тестируем на скорость.
     logger.info(f"🔍 Уникальных конфигов для глубокой проверки: {len(unique_configs)}")
 
     # ================== STAGE 0 ==================
@@ -630,7 +627,9 @@ def main():
     # Быстро (socket connect) и параллельно, без запуска Xray.
     logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр (TCP). Кандидатов: {len(unique_configs)}...")
     alive_configs = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS * 2) as executor:
+    # Пинг — дешёвая операция (socket connect), поэтому пускаем много параллельных потоков,
+    # чтобы быстро прогнать даже 5000+ серверов.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
         futures = [executor.submit(ping_filter, s) for s in unique_configs]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()

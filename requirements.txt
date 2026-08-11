@@ -1,0 +1,8 @@
+aiohttp
+aiohttp-socks
+pyTelegramBotAPI
+requests
+geoip2
+PySocks
+urllib3
+maxminddb

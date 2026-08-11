@@ -1,0 +1,58 @@
+{
+  "servers": [
+    {
+      "name": "💎 🇷🇺 V1A / БЕЛЫЕ СПИСКИ",
+      "ip": "212.22.82.138",
+      "ping": 0,
+      "speed_mbps": 27.29,
+      "score": 0,
+      "country": "RU",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "💎 🇷🇺  V1A / ИНТЕРНЕТ ДО РКН",
+      "ip": "212.22.82.138",
+      "ping": 0,
+      "speed_mbps": 17.9,
+      "score": 0,
+      "country": "RU",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "💎 🇫🇮  V2A / Финляндия",
+      "ip": "87.58.204.248",
+      "ping": 35,
+      "speed_mbps": 0.0,
+      "score": 0,
+      "country": "FI",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "💎 🇫🇮  V2A / Финляндия Warp",
+      "ip": "87.58.204.248",
+      "ping": 28,
+      "speed_mbps": 0.0,
+      "score": 0,
+      "country": "FI",
+      "protocol": "vless reality"
+    },
+    {
+      "name": "🚀 🇩🇪 Германия",
+      "ip": "45.67.215.9",
+      "ping": 21,
+      "speed_mbps": 11.45,
+      "score": 45.0,
+      "country": "DE",
+      "protocol": "trojan tls"
+    },
+    {
+      "name": "🚀 🇩🇪 Германия",
+      "ip": "114.129.43.130",
+      "ping": 16,
+      "speed_mbps": 29.14,
+      "score": 45.0,
+      "country": "DE",
+      "protocol": "vless tls"
+    }
+  ]
+}

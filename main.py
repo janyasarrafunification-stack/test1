@@ -32,11 +32,14 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS_mobile.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-checked.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
-    "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt"  
+    "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt",
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
+    "https://raw.githubusercontent.com/terik21/HiddifySubs-VlessKeys/refs/heads/main/WhiteKeys",
+    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt"
 ]
 
 XRAY_BIN = "./xray"
-OUTPUT_FILE = 'FL1PVPN'
+OUTPUT_FILE = 'subscription'
 JSON_FILE = 'stats.json'
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
@@ -743,15 +746,17 @@ def main():
     
     for s in verified_final_servers:
         if 'custom_name' in s:
-            name = s['custom_name']
+            # Hardcoded-узлы: добавляем пинг и скорость в имя
+            name = f"{s['custom_name']} | Ping: {s.get('real_delay',0)}ms | Speed: {s.get('speed_mbps',0.0)}Mbps"
         else:
             country_display = COUNTRIES_RU.get(s['country'], f"🏳️ {s['country']}")
             speed_badge = get_speed_badge(s['speed_mbps'])
             node_id = f"{s['ip']}:{s['port']}"
             streak = history_data.get(node_id, {}).get("streak", 0)
             gold_star = "🌟" if streak >= 3 else ""
-            name = f"{gold_star}{speed_badge}{country_display}"
-        
+            # Узлы из пула: имя + пинг и скорость
+            name = f"{gold_star}{speed_badge}{country_display} | Ping: {s.get('real_delay',0)}ms | Speed: {s.get('speed_mbps',0.0)}Mbps"
+
         orig = s['original']
         base = orig.split('#')[0]
         final_link = f"{base}#{quote(name)}"

@@ -43,7 +43,7 @@ jobs:
       - name: 🚀 Run VPN Scanner
         run: python main.py
 
-      - name: 📤 Commit ONLY FL1PVPN & stats.json
+      - name: 📤 Commit ONLY subscription & stats.json
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -51,8 +51,12 @@ jobs:
           # Очищаем временные файлы
           rm -f last_update.txt vpn_scanner.log logs/*.log 2>/dev/null || true
 
+          # Удаляем старый файл подписки, если он ещё остался (переименование)
+          git rm --cached FL1PVPN 2>/dev/null || true
+          rm -f FL1PVPN 2>/dev/null || true
+
           # Сохраняем ТОЛЬКО файл подписки и статистику
-          git add FL1PVPN stats.json
+          git add subscription stats.json
 
           COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")
 
@@ -60,7 +64,7 @@ jobs:
           git stash --include-untracked
           git pull --rebase origin main || git pull --rebase origin master || true
           git push origin HEAD
-          echo "✅ Файл FL1PVPN успешно обновлен!"
+          echo "✅ Файл subscription успешно обновлен!"
 
       # ─── АВТОМАТИЧЕСКАЯ ОЧИСТКА ИСТОРИИ WORKFLOW ───
       # Исправленная версия: через REST API + jq, без подавления ошибок.

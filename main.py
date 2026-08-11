@@ -48,8 +48,8 @@ MAX_WORKERS = 40
 TCP_TIMEOUT = 2.5           # Увеличено с 1.0 до 2.5 сек, чтобы удаленные серверы успевали ответить
 REAL_TEST_TIMEOUT = 6.0     # Таймаут проверки через Xray
 SPEED_TEST_TIMEOUT = 6.0
-TOTAL_SERVERS_WANTED = 15   # Количество отбираемых лучших серверов в подписку
-SPEED_HARD_LIMIT = 1.0      # Минимальная скорость для отбора (Mbps)
+TOTAL_SERVERS_WANTED = 15   # (справочно) Лимит количества больше НЕ применяется — в подписку идут все подходящие
+SPEED_HARD_LIMIT = 5.0      # Минимальная скорость для отбора (Mbps)
 
 # ВАЖНО: Добавлена поддержка "urls" (списка) для ротации.
 HARDCODED_NODES = [
@@ -675,11 +675,11 @@ def main():
     # Приоритет сортировки: сначала наименьший пинг, затем наивысший скор (скорость/стабильность)
     pool_global.sort(key=lambda x: (x.get('real_delay', 9999), -x.get('score', 0)))
 
-    final_parsed_selection = []
-    needed_global = TOTAL_SERVERS_WANTED - len(HARDCODED_NODES) 
-    final_parsed_selection.extend(pool_global[:needed_global])
+    # Берём ВСЕ серверы, прошедшие параметры (пинг + скорость >= SPEED_HARD_LIMIT).
+    # Без ограничения по количеству: каждый подходящий узел попадает в подписку.
+    final_parsed_selection = list(pool_global)
 
-    logger.info(f"📊 Отобрано {len(final_parsed_selection)} лучших узлов с парсинга.")
+    logger.info(f"📊 В подписку попадает {len(final_parsed_selection)} узлов с парсинга (все, прошедшие параметры).")
 
     logger.info("💎 Загрузка несгораемых узлов из подписок с ротацией...")
     hardcoded_servers = []
@@ -728,17 +728,22 @@ def main():
 
     # ================== STAGE 2 ==================
     final_10_servers = hardcoded_servers + final_parsed_selection
-    logger.info(f"\n⚡ ЭТАП 2: Индивидуальная проверка (ТОП-{len(final_10_servers)}). Замер точного TCP Пинга ⚡")
+    logger.info(f"\n⚡ ЭТАП 2: Индивидуальная проверка ({len(final_10_servers)} узлов). Замер точного TCP Пинга ⚡")
 
+    # Перепроверяем параллельно (каждый Xray-процесс на своём порту), чтобы
+    # быстро обработать даже сотни серверов. Каждый узел держит свой free-port.
     verified_final_servers = []
-    for idx, s in enumerate(final_10_servers, 1):
-        disp_name = s.get('custom_name') or COUNTRIES_RU.get(s['country'], s['country'])
-        logger.info(f"   [{idx}/{len(final_10_servers)}] Анализ: {disp_name} (IP: {s['ip']}) ...")
-        
-        updated_s = measure_node_stats_sequential(s)
-        verified_final_servers.append(updated_s)
-        
-        logger.info(f"       -> Точный TCP пинг: {updated_s.get('real_delay', 0)}ms | Точная скорость: {updated_s.get('speed_mbps', 0.0)} Mbps\n")
+    STAGE2_WORKERS = 20
+    with concurrent.futures.ThreadPoolExecutor(max_workers=STAGE2_WORKERS) as executor:
+        future_map = {executor.submit(measure_node_stats_sequential, s): s for s in final_10_servers}
+        done = 0
+        for f in concurrent.futures.as_completed(future_map):
+            done += 1
+            s = future_map[f]
+            updated_s = f.result()
+            verified_final_servers.append(updated_s)
+            disp_name = updated_s.get('custom_name') or COUNTRIES_RU.get(updated_s['country'], updated_s['country'])
+            logger.info(f"   [{done}/{len(final_10_servers)}] {disp_name} -> TCP пинг: {updated_s.get('real_delay', 0)}ms | Скорость: {updated_s.get('speed_mbps', 0.0)} Mbps")
 
     result_links = []
     json_stats = {"servers": []}

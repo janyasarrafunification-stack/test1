@@ -138,6 +138,37 @@ HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
 LOCAL_SOURCE_FILE = 'my_source'
 MAX_WORKERS = 40
+
+# --- СЕКРЕТНЫЙ КЛЮЧ ДЛЯ ШИФРОВАНИЯ ИСТОРИИ ---
+# Файл stats_history.json (история проверок) шифруется XOR + base64,
+# т.к. содержит серверные IP/порты и статистику, которые не должны быть
+# видны посторонним. Этот файл нужен только main.py.
+HISTORY_KEY = "V1A-History-Secret-2026"   # <-- Поменяй на свой ключ
+
+def encrypt_history(data_dict) -> str:
+    """Сериализует dict истории и шифрует XOR + base64.
+    Итог — чисто текстовая строка (без бинарных символов), удобна для хранения в git."""
+    plain = json.dumps(data_dict, ensure_ascii=False)
+    b64 = base64.urlsafe_b64encode(plain.encode('utf-8')).decode('utf-8')
+    key = HISTORY_KEY
+    res = []
+    for i, ch in enumerate(b64):
+        res.append(chr(ord(ch) ^ ord(key[i % len(key)])))
+    # XOR-результат может содержать непечатные символы — снова кодируем в base64,
+    # чтобы файл был чистым текстом.
+    return base64.urlsafe_b64encode(''.join(res).encode('utf-8')).decode('utf-8')
+
+def decrypt_history(token: str):
+    """Расшифровывает XOR + base64 и возвращает dict истории."""
+    key = HISTORY_KEY
+    # снимаем внешний base64
+    xored_b64 = base64.urlsafe_b64decode(token).decode('utf-8')
+    b64 = []
+    for i, ch in enumerate(xored_b64):
+        b64.append(chr(ord(ch) ^ ord(key[i % len(key)])))
+    plain = base64.urlsafe_b64decode(''.join(b64)).decode('utf-8')
+    return json.loads(plain)
+
 TCP_TIMEOUT = 2.5           # Увеличено с 1.0 до 2.5 сек, чтобы удаленные серверы успевали ответить
 REAL_TEST_TIMEOUT = 6.0     # Таймаут проверки через Xray
 SPEED_TEST_TIMEOUT = 6.0
@@ -325,14 +356,22 @@ def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                token = f.read().strip()
+            if not token:
+                return {}
+            # 1) пробуем расшифровать (новый формат)
+            try:
+                return decrypt_history(token)
+            except Exception:
+                # 2) иначе пробуем старый (незашифрованный JSON) формат
+                return json.loads(token)
         except:
             pass
     return {}
 
 def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(history, f, indent=2)
+        f.write(encrypt_history(history))
 
 def calculate_quality_score(server, history_data):
     node_id = f"{server['ip']}:{server['port']}"

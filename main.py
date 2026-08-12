@@ -41,6 +41,41 @@ SOURCES = [
 XRAY_BIN = "./xray"
 OUTPUT_FILE = 'subscription'
 JSON_FILE = 'stats.json'
+
+# --- СЕКРЕТНЫЙ КЛЮЧ ДЛЯ ЗАЩИТЫ ПОДПИСКИ ---
+# Файл подписки дополнительно обфусцируется (XOR + сдвиг) поверх base64.
+# В URL подписки встраивается этот ключ (см. SUBSCRIBE_KEY_PARAM), чтобы
+# программа клиента могла расшифровать файл. Без ключа обычный base64-декодер не сработает.
+SUBSCRIBE_KEY = "V1A-Secure-2026"   # <-- Поменяй на свой секретный ключ
+
+def obfuscate(data: str) -> str:
+    """XOR + base64. Простая защита от 'зевак', читающих raw base64."""
+    key = SUBSCRIBE_KEY
+    # Приводим к обычному base64
+    plain = base64.b64encode(data.encode('utf-8')).decode('utf-8')
+    # XOR с ключом
+    res = []
+    kl = len(key)
+    for i, ch in enumerate(plain):
+        res.append(chr(ord(ch) ^ ord(key[i % kl])))
+    # Сдвиг вправо на 3 (RoT3) + снова base64
+    xored = ''.join(res)
+    rotated = xored[-3:] + xored[:-3]  # перестановка
+    return base64.b64encode(rotated.encode('utf-8')).decode('utf-8')
+
+
+def deobfuscate(token: str) -> str:
+    """Обратная операция к obfuscate(). Нужна программе-клиенту и для самопроверки."""
+    key = SUBSCRIBE_KEY
+    rotated_b64 = base64.b64decode(token).decode('utf-8')
+    xored = rotated_b64[3:] + rotated_b64[:3]  # обратный сдвиг
+    plain_b64 = []
+    kl = len(key)
+    for i, ch in enumerate(xored):
+        plain_b64.append(chr(ord(ch) ^ ord(key[i % kl])))
+    return base64.b64decode(''.join(plain_b64)).decode('utf-8')
+
+
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
 LOCAL_SOURCE_FILE = 'my_source'
@@ -733,7 +768,7 @@ def main():
     # Перепроверяем параллельно (каждый Xray-процесс на своём порту), чтобы
     # быстро обработать даже сотни серверов. Каждый узел держит свой free-port.
     verified_final_servers = []
-    STAGE2_WORKERS = 20
+    STAGE2_WORKERS = 40   # Параллельных проверок скорости (Xray-процессов) одновременно
     with concurrent.futures.ThreadPoolExecutor(max_workers=STAGE2_WORKERS) as executor:
         future_map = {executor.submit(measure_node_stats_sequential, s): s for s in final_10_servers}
         done = 0
@@ -750,16 +785,17 @@ def main():
     
     for s in verified_final_servers:
         if 'custom_name' in s:
-            # Hardcoded-узлы: добавляем пинг и скорость в имя
-            name = f"{s['custom_name']} | Ping: {s.get('real_delay',0)}ms | Speed: {s.get('speed_mbps',0.0)}Mbps"
+            # Hardcoded-узлы: имя + пинг и скорость в структурированном формате
+            name = f"{s['custom_name']} [Ping:{s.get('real_delay',0)}ms|Speed:{s.get('speed_mbps',0.0)}Mbps]"
         else:
             country_display = COUNTRIES_RU.get(s['country'], f"🏳️ {s['country']}")
             speed_badge = get_speed_badge(s['speed_mbps'])
             node_id = f"{s['ip']}:{s['port']}"
             streak = history_data.get(node_id, {}).get("streak", 0)
             gold_star = "🌟" if streak >= 3 else ""
-            # Узлы из пула: имя + пинг и скорость
-            name = f"{gold_star}{speed_badge}{country_display} | Ping: {s.get('real_delay',0)}ms | Speed: {s.get('speed_mbps',0.0)}Mbps"
+            # Узлы из пула: структурированный формат для парсера.
+            # Формат: [Ping:<мс>ms|Speed:<мб/с>Mbps] — легко парсить регуляркой.
+            name = f"{gold_star}{speed_badge}{country_display} [Ping:{s.get('real_delay',0)}ms|Speed:{s.get('speed_mbps',0.0)}Mbps]"
 
         orig = s['original']
         base = orig.split('#')[0]
@@ -777,15 +813,15 @@ def main():
         })
 
     raw_str = "\n".join(result_links)
-    b64_str = base64.b64encode(raw_str.encode('utf-8')).decode('utf-8')
-    
+    b64_str = obfuscate(raw_str)
+
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(b64_str)
     
     with open(JSON_FILE, 'w', encoding='utf-8') as f:
         json.dump(json_stats, f, indent=2, ensure_ascii=False)
         
-    logger.info(f"💾 Успешно сохранено: {OUTPUT_FILE} и {JSON_FILE} (Финальный пул: {len(result_links)} узлов)")
+    logger.info(f"💾 Успешно сохранено: {OUTPUT_FILE} (зашифровано ключом) и {JSON_FILE} (Финальный пул: {len(result_links)} узлов)")
 
 if __name__ == "__main__":
     main()

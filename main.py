@@ -76,6 +76,64 @@ def deobfuscate(token: str) -> str:
     return base64.urlsafe_b64decode(rev + '=' * pad).decode('utf-8')
 
 
+def node_id_of(server):
+    return f"{server['ip']}:{server['port']}"
+
+def speed_due_for_check(history_data, node_id):
+    """True, если скорость сервера пора перепроверить (прошло >= SPEED_CHECK_INTERVAL)."""
+    last = history_data.get(node_id, {}).get('last_speed_check', 0)
+    return (time.time() - last) >= SPEED_CHECK_INTERVAL
+
+def extract_ping_speed_from_link(server):
+    """Из ссылки старого subscription извлекаем пинг/скорость из имени (#...)."""
+    orig = server.get('original', '')
+    if '#' in orig:
+        frag = orig.split('#', 1)[1]
+        m = re.search(r'Speed:([\d.]+)', frag)
+        if m:
+            server['speed_mbps'] = float(m.group(1))
+        m = re.search(r'Ping:(\d+)', frag)
+        if m:
+            server['real_delay'] = int(m.group(1))
+    return server
+
+def parse_link_into_server(link):
+    """Разбирает строку подписки в dict сервера (или None)."""
+    try:
+        link = link.strip()
+        if link.lower().startswith("vless"):
+            return parse_vless(link)
+        elif link.lower().startswith("trojan"):
+            return parse_trojan(link)
+        else:
+            return parse_vmess(link)
+    except Exception:
+        return None
+
+def load_previous_subscription():
+    """Читает текущий subscription (лежит в репо), расшифровывает и возвращает старые серверы."""
+    servers = []
+    if not os.path.exists(OUTPUT_FILE):
+        logger.info("📂 Прошлого subscription нет — работаем только с новыми серверами.")
+        return servers
+    try:
+        with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
+            token = f.read().strip()
+        raw = deobfuscate(token)
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            srv = parse_link_into_server(line)
+            if srv:
+                extract_ping_speed_from_link(srv)
+                srv['from_prev'] = True   # метка: сервер из старого списка
+                servers.append(srv)
+        logger.info(f"📂 Прошлый subscription содержит {len(servers)} серверов.")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось прочитать прошлый subscription: {e}")
+    return servers
+
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
 LOCAL_SOURCE_FILE = 'my_source'
@@ -85,6 +143,16 @@ REAL_TEST_TIMEOUT = 6.0     # Таймаут проверки через Xray
 SPEED_TEST_TIMEOUT = 6.0
 TOTAL_SERVERS_WANTED = 15   # (справочно) Лимит количества больше НЕ применяется — в подписку идут все подходящие
 SPEED_HARD_LIMIT = 5.0      # Минимальная скорость для отбора (Mbps)
+
+# --- ЛИМИТ ПОДПИСКИ ---
+# Максимальное число серверов в итоговом файле subscription.
+# Легко корректируется: увеличь/уменьши число здесь.
+MAX_SUBSCRIPTION_SERVERS = 1200
+
+# --- ПЕРИОД ПЕРЕПРОВЕРКИ СКОРОСТИ ---
+# Скорость уже проверенных (старых) серверов пере-тестируется раз в 24 часа.
+# Пинг при этом проверяется КАЖДЫЙ запуск (дёшево и быстро).
+SPEED_CHECK_INTERVAL = 24 * 3600  # секунды = 24 часа
 
 # ВАЖНО: Добавлена поддержка "urls" (списка) для ротации.
 HARDCODED_NODES = [
@@ -546,10 +614,16 @@ def deep_verify(server):
     return None
 
 # --- ЭТАП 2: ФИНАЛЬНОЕ ПОСЛЕДОВАТЕЛЬНОЕ ТЕСТИРОВАНИЕ ТОП-10 ---
-def measure_node_stats_sequential(server):
+def measure_node_stats_sequential(server, check_speed=True):
     # 1. Замер чистого TCP Пинга (для отображения на сайте)
     new_latency = get_accurate_ping(server['ip'], server['port'], attempts=5)
-    
+
+    # Для старых серверов с непросроченной скоростью пропускаем скорость
+    # (check_speed=False) — только пинг и локация. Это экономит время.
+    if not check_speed:
+        server['real_delay'] = new_latency if new_latency != 9999 else server.get('real_delay', 0)
+        return server
+
     local_port = get_free_port()
     config = generate_xray_config(server, local_port)
     
@@ -618,6 +692,10 @@ def main():
         return
 
     history_data = load_history()
+
+    # ── Загружаем старые серверы из прошлого subscription (лежит в репо) ──
+    prev_servers = load_previous_subscription()
+
     all_configs = []
 
     # ИСПРАВЛЕНИЕ СКОРОСТИ: Загружаем все источники ПАРАЛЛЕЛЬНО
@@ -651,70 +729,104 @@ def main():
         except Exception as e:
             logger.error(f"❌ Ошибка чтения {LOCAL_SOURCE_FILE}: {e}")
 
-    unique_configs = list({f"{c['ip']}:{c['port']}": c for c in all_configs}.values())
-    
-    # НЕ ограничиваем пул: берём ВСЕ уникальные серверы.
-    # Сначала дешёвый пинг-фильтр отсеет мёртвых, и только выживших тестируем на скорость.
-    logger.info(f"🔍 Уникальных конфигов для глубокой проверки: {len(unique_configs)}")
+    new_configs = list({f"{c['ip']}:{c['port']}": c for c in all_configs}.values())
+    logger.info(f"🔍 Уникальных новых конфигов: {len(new_configs)}")
+
+    # ─────────────────────────────────────────────────────────────
+    # СТАРЫЕ серверы из прошлого subscription: пинг ВСЕГДА, скорость раз в 24ч
+    # ─────────────────────────────────────────────────────────────
+    # 1) Дешёвый пинг старых (отсеиваем мёртвых, не трогая скорость)
+    logger.info(f"⚡ Пинг старых серверов ({len(prev_servers)})...")
+    alive_prev = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
+        futures = [executor.submit(ping_filter, s) for s in prev_servers]
+        for f in concurrent.futures.as_completed(futures):
+            res = f.result()
+            if res:
+                alive_prev.append(res)
+    logger.info(f"✅ Старых живых: {len(alive_prev)} из {len(prev_servers)}.")
+
+    # Разделяем старых: кому нужно перепроверить скорость (прошло 24ч), а кого оставить как есть
+    prev_keep = []      # живые, скорость не просрочена -> оставляем как есть (без перепроверки скорости)
+    prev_recheck = []   # живые, скорость просрочена -> перепроверить скорость в STAGE 1
+    for s in alive_prev:
+        if speed_due_for_check(history_data, node_id_of(s)):
+            prev_recheck.append(s)
+        else:
+            prev_keep.append(s)
+    logger.info(f"   Старых с актуальной скоростью (оставляем): {len(prev_keep)} | нужно перепроверить скорость: {len(prev_recheck)}")
 
     # ================== STAGE 0 ==================
-    # Дешёвый TCP-пинг-фильтр: отсеиваем мёртвые серверы ДО дорогого Xray-теста.
-    # Быстро (socket connect) и параллельно, без запуска Xray.
-    logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр (TCP). Кандидатов: {len(unique_configs)}...")
+    # Дешёвый TCP-пинг НОВЫХ серверов
+    logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр новых (TCP). Кандидатов: {len(new_configs)}...")
     alive_configs = []
-    # Пинг — дешёвая операция (socket connect), поэтому пускаем много параллельных потоков,
-    # чтобы быстро прогнать даже 5000+ серверов.
     with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
-        futures = [executor.submit(ping_filter, s) for s in unique_configs]
+        futures = [executor.submit(ping_filter, s) for s in new_configs]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
             if res:
                 alive_configs.append(res)
-    unique_configs = alive_configs
-    logger.info(f"✅ После пинга выжило: {len(unique_configs)}. Далее — проверка Xray+скорость только для них.")
+    new_alive = alive_configs
+    logger.info(f"✅ Новых после пинга выжило: {len(new_alive)}.")
 
     # ================== STAGE 1 ==================
+    # Массовое тестирование скорости: НОВЫЕ живые + старые с просроченной скоростью
+    to_speed_test = new_alive + prev_recheck
     tested_servers = []
-    logger.info(f"⚡ ЭТАП 1: Массовое отсеивание (Real Ping). Workers: {MAX_WORKERS}...")
+    logger.info(f"⚡ ЭТАП 1: Тестирование скорости (Xray). Workers: {MAX_WORKERS}... Кандидатов: {len(to_speed_test)}")
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(deep_verify, s) for s in unique_configs]
+        futures = [executor.submit(deep_verify, s) for s in to_speed_test]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
             if res:
                 tested_servers.append(res)
                 logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP Пинг: {res['real_delay']}ms | Скорость: {res['speed_mbps']} Mbps")
 
-    # Отбираем в итоговый файл ТОЛЬКО серверы, прошедшие пинг И имеющие скорость >= порога.
-    # (по выбору: без спец-включения РФ/СНГ)
-    pool_global = []
-    
-    for s in tested_servers:
-        node_id = f"{s['ip']}:{s['port']}"
-        s['score'] = calculate_quality_score(s, history_data)
-        
+    # Обновляем историю и собираем пул
+    pool = []
+
+    def register_history(s):
+        node_id = node_id_of(s)
         if node_id not in history_data:
             history_data[node_id] = {"streak": 0, "failures": 0, "last_seen": str(datetime.now().date())}
-        
-        if s['speed_mbps'] >= SPEED_HARD_LIMIT:
+        if s.get('speed_mbps', 0) >= SPEED_HARD_LIMIT:
             history_data[node_id]["streak"] += 1
             history_data[node_id]["failures"] = max(0, history_data[node_id]["failures"] - 1)
         else:
             history_data[node_id]["failures"] += 1
             history_data[node_id]["streak"] = 0
+        # фиксируем время последней проверки скорости
+        history_data[node_id]["last_speed_check"] = int(time.time())
 
+    # 1) Старые с актуальной скоростью — берём сразу (они уже проходили проверку ранее)
+    for s in prev_keep:
+        node_id = node_id_of(s)
+        if node_id not in history_data:
+            history_data[node_id] = {"streak": 0, "failures": 0, "last_seen": str(datetime.now().date())}
+        # живой пинг подтверждён, скорость актуальна
+        history_data[node_id]["streak"] += 1
+        history_data[node_id]["failures"] = max(0, history_data[node_id]["failures"] - 1)
+        s['score'] = calculate_quality_score(s, history_data)
+        s['skip_speed'] = True   # в STAGE 2 перепроверяем только пинг, скорость не трогаем
+        pool.append(s)
+
+    # 2) Протестированные (новые + старые с перепроверкой) — прошедшие порог
+    for s in tested_servers:
+        register_history(s)
+        s['score'] = calculate_quality_score(s, history_data)
         if s['speed_mbps'] >= SPEED_HARD_LIMIT:
-            pool_global.append(s)
+            pool.append(s)
 
     save_history(history_data)
 
-    # Приоритет сортировки: сначала наименьший пинг, затем наивысший скор (скорость/стабильность)
-    pool_global.sort(key=lambda x: (x.get('real_delay', 9999), -x.get('score', 0)))
+    # Приоритет сортировки: старые живые впереди (стабильные), затем новые.
+    # Внутри группы — по пингу и скору.
+    pool.sort(key=lambda x: (0 if x.get('from_prev') else 1, x.get('real_delay', 9999), -x.get('score', 0)))
 
-    # Берём ВСЕ серверы, прошедшие параметры (пинг + скорость >= SPEED_HARD_LIMIT).
-    # Без ограничения по количеству: каждый подходящий узел попадает в подписку.
-    final_parsed_selection = list(pool_global)
+    # Применяем лимит подписки
+    final_parsed_selection = pool[:MAX_SUBSCRIPTION_SERVERS]
 
-    logger.info(f"📊 В подписку попадает {len(final_parsed_selection)} узлов с парсинга (все, прошедшие параметры).")
+    logger.info(f"📊 В подписку попадает {len(final_parsed_selection)} узлов (лимит {MAX_SUBSCRIPTION_SERVERS}).")
 
     logger.info("💎 Загрузка несгораемых узлов из подписок с ротацией...")
     hardcoded_servers = []
@@ -768,9 +880,12 @@ def main():
     # Перепроверяем параллельно (каждый Xray-процесс на своём порту), чтобы
     # быстро обработать даже сотни серверов. Каждый узел держит свой free-port.
     verified_final_servers = []
-    STAGE2_WORKERS = 40   # Параллельных проверок скорости (Xray-процессов) одновременно
+    STAGE2_WORKERS = 40   # Параллельных проверок (Xray-процессов) одновременно
     with concurrent.futures.ThreadPoolExecutor(max_workers=STAGE2_WORKERS) as executor:
-        future_map = {executor.submit(measure_node_stats_sequential, s): s for s in final_10_servers}
+        future_map = {
+            executor.submit(measure_node_stats_sequential, s, check_speed=not s.get('skip_speed', False)): s
+            for s in final_10_servers
+        }
         done = 0
         for f in concurrent.futures.as_completed(future_map):
             done += 1

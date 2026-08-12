@@ -137,7 +137,7 @@ def load_previous_subscription():
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
 LOCAL_SOURCE_FILE = 'my_source'
-MAX_WORKERS = 40
+MAX_WORKERS = 25
 
 # --- СЕКРЕТНЫЙ КЛЮЧ ДЛЯ ШИФРОВАНИЯ ИСТОРИИ ---
 # Файл stats_history.json (история проверок) шифруется XOR + base64,
@@ -173,7 +173,7 @@ TCP_TIMEOUT = 2.5           # Увеличено с 1.0 до 2.5 сек, что�
 REAL_TEST_TIMEOUT = 6.0     # Таймаут проверки через Xray
 SPEED_TEST_TIMEOUT = 6.0
 TOTAL_SERVERS_WANTED = 15   # (справочно) Лимит количества больше НЕ применяется — в подписку идут все подходящие
-SPEED_HARD_LIMIT = 5.0      # Минимальная скорость для отбора (Mbps)
+SPEED_HARD_LIMIT = 12.0      # Минимальная скорость для отбора (Mbps)
 
 # --- ЛИМИТ ПОДПИСКИ ---
 # Максимальное число серверов в итоговом файле subscription.

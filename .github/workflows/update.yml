@@ -55,8 +55,8 @@ jobs:
           git rm --cached FL1PVPN 2>/dev/null || true
           rm -f FL1PVPN 2>/dev/null || true
 
-          # Сохраняем ТОЛЬКО файл подписки
-          git add subscription
+          # Сохраняем файл подписки И историю проверок (для логики 24ч перепроверки скорости)
+          git add subscription stats_history.json
 
           # stats.json временно отключён (будущая реализация) — счётчик не считаем
           # COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")

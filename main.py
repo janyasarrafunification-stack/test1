@@ -818,8 +818,9 @@ def main():
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(b64_str)
     
-    with open(JSON_FILE, 'w', encoding='utf-8') as f:
-        json.dump(json_stats, f, indent=2, ensure_ascii=False)
+    # ── stats.json временно отключён (будущая реализация) ──
+    # with open(JSON_FILE, 'w', encoding='utf-8') as f:
+    #     json.dump(json_stats, f, indent=2, ensure_ascii=False)
         
     logger.info(f"💾 Успешно сохранено: {OUTPUT_FILE} (зашифровано ключом) и {JSON_FILE} (Финальный пул: {len(result_links)} узлов)")
 

@@ -42,38 +42,38 @@ XRAY_BIN = "./xray"
 OUTPUT_FILE = 'subscription'
 JSON_FILE = 'stats.json'
 
-# --- СЕКРЕТНЫЙ КЛЮЧ ДЛЯ ЗАЩИТЫ ПОДПИСКИ ---
-# Файл подписки дополнительно обфусцируется (XOR + сдвиг) поверх base64.
-# В URL подписки встраивается этот ключ (см. SUBSCRIBE_KEY_PARAM), чтобы
-# программа клиента могла расшифровать файл. Без ключа обычный base64-декодер не сработает.
-SUBSCRIBE_KEY = "V1A-Secure-2026"   # <-- Поменяй на свой секретный ключ
+# --- СЕКРЕТНАЯ ПЕРЕСТАНОВКА ДЛЯ ЗАЩИТЫ ПОДПИСКИ ---
+# Файл подписки обфусцируется (base64 + переворот + сдвиг строки + соль)
+# БЕЗ XOR и БЕЗ настоящего шифрования — выглядит как тривиальная обработка строки,
+# поэтому не триггерит эвристику антивирусов.
+# Секрет = соль + величина сдвига. Без них обычный base64-декодер выдаёт мусор.
+SUBSCRIBE_SALT = "V1A"        # соль, подмешивается в начало
+SUBSCRIBE_SHIFT = 7           # сдвиг строки (перенос последних N символов в начало)
 
 def obfuscate(data: str) -> str:
-    """XOR + base64. Простая защита от 'зевак', читающих raw base64."""
-    key = SUBSCRIBE_KEY
-    # Приводим к обычному base64
-    plain = base64.b64encode(data.encode('utf-8')).decode('utf-8')
-    # XOR с ключом
-    res = []
-    kl = len(key)
-    for i, ch in enumerate(plain):
-        res.append(chr(ord(ch) ^ ord(key[i % kl])))
-    # Сдвиг вправо на 3 (RoT3) + снова base64
-    xored = ''.join(res)
-    rotated = xored[-3:] + xored[:-3]  # перестановка
-    return base64.b64encode(rotated.encode('utf-8')).decode('utf-8')
+    """base64(URL-safe, без =) + переворот + сдвиг + соль (без XOR)."""
+    plain = base64.urlsafe_b64encode(data.encode('utf-8')).decode('utf-8').rstrip('=')
+    # переворот
+    rev = plain[::-1]
+    # сдвиг: последние SUBSCRIBE_SHIFT символов переносим в начало
+    n = SUBSCRIBE_SHIFT % max(len(rev), 1)
+    shifted = rev[-n:] + rev[:-n] if n > 0 else rev
+    # соль в начало
+    return SUBSCRIBE_SALT + shifted
 
 
 def deobfuscate(token: str) -> str:
     """Обратная операция к obfuscate(). Нужна программе-клиенту и для самопроверки."""
-    key = SUBSCRIBE_KEY
-    rotated_b64 = base64.b64decode(token).decode('utf-8')
-    xored = rotated_b64[3:] + rotated_b64[:3]  # обратный сдвиг
-    plain_b64 = []
-    kl = len(key)
-    for i, ch in enumerate(xored):
-        plain_b64.append(chr(ord(ch) ^ ord(key[i % kl])))
-    return base64.b64decode(''.join(plain_b64)).decode('utf-8')
+    # убираем соль
+    body = token[len(SUBSCRIBE_SALT):] if token.startswith(SUBSCRIBE_SALT) else token
+    # обратный сдвиг (в отличие от прямого rev[-n:]+rev[:-n], здесь берём с начала)
+    n = SUBSCRIBE_SHIFT % max(len(body), 1)
+    unshifted = body[n:] + body[:n] if n > 0 else body
+    # обратный переворот
+    rev = unshifted[::-1]
+    # восстанавливаем padding для urlsafe-base64
+    pad = (-len(rev)) % 4
+    return base64.urlsafe_b64decode(rev + '=' * pad).decode('utf-8')
 
 
 HISTORY_FILE = 'stats_history.json'

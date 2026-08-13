@@ -659,12 +659,6 @@ def measure_node_stats_sequential(server, check_speed=True):
     # 1. Замер чистого TCP Пинга (для отображения на сайте)
     new_latency = get_accurate_ping(server['ip'], server['port'], attempts=5)
 
-    # Для старых серверов с непросроченной скоростью пропускаем скорость
-    # (check_speed=False) — только пинг и локация. Это экономит время.
-    if not check_speed:
-        server['real_delay'] = new_latency if new_latency != 9999 else server.get('real_delay', 0)
-        return server
-
     local_port = get_free_port()
     config = generate_xray_config(server, local_port)
     
@@ -675,32 +669,40 @@ def measure_node_stats_sequential(server, check_speed=True):
     proc = None
     new_speed = 0.0
     new_country = server.get('country', 'XX')
+    loc_ok = False   # стал ли известен код страны через Cloudflare trace
     
     try:
         proc = subprocess.Popen([XRAY_BIN, "-c", config_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1.0) 
         proxies = {"http": f"http://127.0.0.1:{local_port}", "https": f"http://127.0.0.1:{local_port}"}
 
-        # Локация
+        # Локация (определяем страну всегда — и для новых, и для старых серверов)
         resp = requests.get("https://cloudflare.com/cdn-cgi/trace", proxies=proxies, timeout=REAL_TEST_TIMEOUT)
         if resp.status_code == 200:
             match = re.search(r'loc=([A-Z]{2})', resp.text)
-            if match: new_country = match.group(1)
+            if match:
+                new_country = match.group(1)
+                loc_ok = True
+            else:
+                loc_ok = False
 
-        # Скорость
-        dl_start = time.perf_counter()
-        downloaded_bytes = 0
-        dl_resp = requests.get(
-            "https://speed.cloudflare.com/__down?bytes=5000000",
-            proxies=proxies, timeout=(2.0, SPEED_TEST_TIMEOUT), stream=True
-        )
-        if dl_resp.status_code == 200:
-            for chunk in dl_resp.iter_content(chunk_size=8192):
-                if chunk: downloaded_bytes += len(chunk)
-                if time.perf_counter() - dl_start > SPEED_TEST_TIMEOUT: break
-            duration = time.perf_counter() - dl_start
-            if duration > 0:
-                new_speed = round((downloaded_bytes * 8 / 1_000_000) / duration, 2)
+        # Скорость проверяем ТОЛЬКО если check_speed=True (новые или просроченные старые).
+        # Для старых с актуальной скоростью (check_speed=False) пропускаем дорогой download —
+        # скорость остаётся извлечённой из имени (экономия времени).
+        if check_speed:
+            dl_start = time.perf_counter()
+            downloaded_bytes = 0
+            dl_resp = requests.get(
+                "https://speed.cloudflare.com/__down?bytes=5000000",
+                proxies=proxies, timeout=(2.0, SPEED_TEST_TIMEOUT), stream=True
+            )
+            if dl_resp.status_code == 200:
+                for chunk in dl_resp.iter_content(chunk_size=8192):
+                    if chunk: downloaded_bytes += len(chunk)
+                    if time.perf_counter() - dl_start > SPEED_TEST_TIMEOUT: break
+                duration = time.perf_counter() - dl_start
+                if duration > 0:
+                    new_speed = round((downloaded_bytes * 8 / 1_000_000) / duration, 2)
                 
     except Exception:
         pass 
@@ -710,6 +712,12 @@ def measure_node_stats_sequential(server, check_speed=True):
             try: proc.wait(timeout=0.5)
             except: proc.kill()
         if os.path.exists(config_path): os.remove(config_path)
+
+    # Если Xray-туннель не прошёл (Cloudflare trace не вернул страну) — сервер нерабочий,
+    # возвращаем real_delay=9999, чтобы его исключили на этапе сборки.
+    if not loc_ok:
+        server['real_delay'] = 9999
+        return server
 
     # Перезаписываем задержку на точный TCP пинг
     server['real_delay'] = new_latency if new_latency != 9999 else server.get('real_delay', 0)
@@ -935,8 +943,9 @@ def main():
             done += 1
             s = future_map[f]
             updated_s = f.result()
-            # Если точный TCP-пинг не прошёл (9999) — сервер исключаем (мёртв/недоступен)
-            if updated_s.get('real_delay', 0) == 9999:
+            # Если точный TCP-пинг не прошёл (9999) — сервер исключаем (мёртв/недоступен),
+            # НО hardcoded-узлы (custom_name, «несгораемые») оставляем всегда.
+            if updated_s.get('real_delay', 0) == 9999 and 'custom_name' not in updated_s:
                 continue
             verified_final_servers.append(updated_s)
             disp_name = updated_s.get('custom_name') or COUNTRIES_RU.get(updated_s['country'], updated_s['country'])

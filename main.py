@@ -88,7 +88,9 @@ def extract_ping_speed_from_link(server):
     """Из ссылки старого subscription извлекаем пинг/скорость из имени (#...)."""
     orig = server.get('original', '')
     if '#' in orig:
-        frag = orig.split('#', 1)[1]
+        # Имя URL-закодировано (quote), поэтому декодируем перед поиском Speed:/Ping:
+        from urllib.parse import unquote
+        frag = unquote(orig.split('#', 1)[1])
         m = re.search(r'Speed:([\d.]+)', frag)
         if m:
             server['speed_mbps'] = float(m.group(1))
@@ -840,6 +842,9 @@ def main():
     # 1) Старые с актуальной скоростью — берём сразу (они уже проходили проверку ранее)
     for s in prev_keep:
         node_id = node_id_of(s)
+        # Отбрасываем старые серверы, не прошедшие порог скорости (напр. Speed:0.0)
+        if s.get('speed_mbps', 0) < SPEED_HARD_LIMIT:
+            continue
         if node_id not in history_data:
             history_data[node_id] = {"streak": 0, "failures": 0, "last_seen": str(datetime.now().date())}
         # живой пинг подтверждён, скорость актуальна
@@ -930,6 +935,9 @@ def main():
             done += 1
             s = future_map[f]
             updated_s = f.result()
+            # Если точный TCP-пинг не прошёл (9999) — сервер исключаем (мёртв/недоступен)
+            if updated_s.get('real_delay', 0) == 9999:
+                continue
             verified_final_servers.append(updated_s)
             disp_name = updated_s.get('custom_name') or COUNTRIES_RU.get(updated_s['country'], updated_s['country'])
             logger.info(f"   [{done}/{len(final_10_servers)}] {disp_name} -> TCP пинг: {updated_s.get('real_delay', 0)}ms | Скорость: {updated_s.get('speed_mbps', 0.0)} Mbps")

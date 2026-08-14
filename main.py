@@ -204,7 +204,10 @@ def load_previous_subscription():
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
 LOCAL_SOURCE_FILE = 'my_source'
-MAX_WORKERS = int(os.getenv("V1A_WORKERS", "48"))   # Параллельных Xray-тестов в STAGE 1 (по умолчанию 48)
+# Сколько Xray-тестов запускать параллельно.
+# GitHub runner (ubuntu-latest) = 4 CPU: больше 40 воркеров дают конкуренцию
+# и ложные отказы. Можно поднять через V1A_WORKERS на более мощном сервере.
+MAX_WORKERS = int(os.getenv("V1A_WORKERS", "40"))   # Параллельных Xray-тестов в STAGE 1
 
 # --- СЕКРЕТНЫЙ КЛЮЧ ДЛЯ ШИФРОВАНИЯ ИСТОРИИ ---
 # Файл stats_history.json (история проверок) шифруется XOR + base64,
@@ -1268,7 +1271,9 @@ def main():
     # Перепроверяем параллельно (каждый Xray-процесс на своём порту), чтобы
     # быстро обработать даже сотни серверов. Каждый узел держит свой free-port.
     verified_final_servers = []
-    STAGE2_WORKERS = int(os.getenv("V1A_STAGE2_WORKERS", "80"))   # Параллельных проверок (Xray-процессов) одновременно
+    # 40-48 параллельных Xray-процессов оптимальны для 4-ядерного GitHub-раннера;
+    # 80 создают конкуренцию за CPU и TCP-сокеты -> ложные таймауты (узел «умирает»).
+    STAGE2_WORKERS = int(os.getenv("V1A_STAGE2_WORKERS", "48"))   # Параллельных проверок (Xray-процессов) одновременно
     with concurrent.futures.ThreadPoolExecutor(max_workers=STAGE2_WORKERS) as executor:
         future_map = {
             executor.submit(measure_node_stats_sequential, s, check_speed=not s.get('skip_speed', False)): s

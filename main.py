@@ -42,6 +42,47 @@ XRAY_BIN = "./xray"
 OUTPUT_FILE = 'subscription'
 JSON_FILE = 'stats.json'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 🎛 ПОДДЕРЖИВАЕМЫЕ ПРОТОКОЛЫ — включай/выключай типы серверов
+# ─────────────────────────────────────────────────────────────────────────────
+# По умолчанию парсятся, тестируются и записываются ТОЛЬКО vless.
+# Чтобы включить протокол — удали «# » перед его строкой (раскомментируй).
+#
+#   vless        — VLESS (reality/tls/ws/grpc/xhttp/httpupgrade...)  ✅
+#   vmess        — VMess (ws/tcp...)                                 ✅
+#   trojan       — Trojan (tls/ws/grpc...)                           ✅
+#   shadowsocks  — Shadowsocks (ss://)                               ✅
+#   hysteria2    — Hysteria2 (hysteria2://, hy2://)                   ✅
+#                  (нужен Xray >= v25; по умолчанию ставится ПОСЛЕДНЯЯ версия —
+#                   см. get_latest_xray_version / install_xray_core)
+#
+# Больше включённых протоколов = больше кандидатов и дольше тест.
+ENABLED_PROTOCOLS = {
+    "vless",          # VLESS — по умолчанию
+    # "vmess",        # VMess
+    # "trojan",       # Trojan
+    # "shadowsocks",  # Shadowsocks
+    # "hysteria2",    # Hysteria2 (требует Xray >= v25, см. выше)
+}
+
+# Префикс ссылки -> внутреннее имя протокола (для LINK_PROTO_NAMES)
+LINK_PROTO_NAMES = {
+    "vless": "vless",
+    "vmess": "vmess",
+    "trojan": "trojan",
+    "ss": "shadowsocks",
+    "hysteria2": "hysteria2",
+    "hy2": "hysteria2",
+}
+
+def protocol_enabled(link):
+    """True, если протокол ссылки включён в ENABLED_PROTOCOLS."""
+    try:
+        prefix = link.split('://', 1)[0].lower()
+        return LINK_PROTO_NAMES.get(prefix, prefix) in ENABLED_PROTOCOLS
+    except Exception:
+        return False
+
 # --- СЕКРЕТНАЯ ПЕРЕСТАНОВКА ДЛЯ ЗАЩИТЫ ПОДПИСКИ ---
 # Файл подписки обфусцируется (base64 + переворот + сдвиг строки + соль)
 # БЕЗ XOR и БЕЗ настоящего шифрования — выглядит как тривиальная обработка строки,
@@ -100,15 +141,27 @@ def extract_ping_speed_from_link(server):
     return server
 
 def parse_link_into_server(link):
-    """Разбирает строку подписки в dict сервера (или None)."""
+    """Разбирает строку подписки в dict сервера (или None).
+
+    Учитывает ENABLED_PROTOCOLS: ссылки выключенных протоколов игнорируются.
+    """
     try:
         link = link.strip()
-        if link.lower().startswith("vless"):
+        prefix = link.split('://', 1)[0].lower()
+        proto = LINK_PROTO_NAMES.get(prefix)
+        if proto not in ENABLED_PROTOCOLS:
+            return None
+        if proto == "vless":
             return parse_vless(link)
-        elif link.lower().startswith("trojan"):
+        elif proto == "trojan":
             return parse_trojan(link)
-        else:
+        elif proto == "vmess":
             return parse_vmess(link)
+        elif proto == "shadowsocks":
+            return parse_shadowsocks(link)
+        elif proto == "hysteria2":
+            return parse_hysteria2(link)
+        return None
     except Exception:
         return None
 
@@ -293,10 +346,32 @@ def ping_filter(server):
     except:
         return None
 
+def get_latest_xray_version():
+    """Возвращает последнюю стабильную версию Xray (например '26.3.27').
+
+    При недоступности GitHub API — резервная версия, заведомо с hysteria2.
+    """
+    pinned = os.getenv("V1A_XRAY_VERSION", "").strip()
+    if pinned:
+        return pinned.lstrip("v")
+    try:
+        r = requests.get("https://api.github.com/repos/XTLS/Xray-core/releases/latest", timeout=8)
+        if r.status_code == 200:
+            tag = r.json().get("tag_name", "")
+            if tag:
+                return tag.lstrip("v")
+    except Exception:
+        pass
+    logger.warning("⚠️ Не удалось получить последнюю версию Xray с GitHub API — использую резервную 26.3.27")
+    return "26.3.27"   # резерв: заведомо поддерживает hysteria2
+
+
 def install_xray_core():
     import zipfile, io
-    desired_version = "1.8.24" # Обновлено для поддержки xhttp/httpupgrade/splithttp
-    
+    # Версия Xray: ПО УМОЛЧАНИЮ — последняя (latest), т.к. hysteria2 есть только в v25+.
+    # Зафиксировать конкретную версию можно через V1A_XRAY_VERSION=1.8.24 (и т.п.).
+    desired_version = get_latest_xray_version()
+
     if os.path.exists(XRAY_BIN):
         st = os.stat(XRAY_BIN)
         if not (st.st_mode & stat.S_IEXEC):
@@ -321,7 +396,7 @@ def install_xray_core():
     logger.info(f"📥 Xray core ({desired_version}) скачивается...")
     url = f"https://github.com/XTLS/Xray-core/releases/download/v{desired_version}/Xray-linux-64.zip"
     try:
-        r = requests.get(url, stream=True, timeout=30)
+        r = requests.get(url, stream=True, timeout=60)
         if r.status_code == 200:
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                 if 'xray' in z.namelist():
@@ -338,6 +413,44 @@ def install_xray_core():
     except Exception as e:
         logger.error(f"❌ Критическая ошибка установки Xray: {e}")
 
+# Внутреннее имя протокола -> имя протокола в конфиге Xray
+XRAY_PROTO_BY_INTERNAL = {
+    "hysteria2": "hysteria",   # в Xray hysteria2 называется "hysteria" с version=2
+}
+
+# Кэш результатов проверки: имя протокола Xray -> True/False
+_XRAY_PROTO_OK = {}
+
+def xray_supports_protocol(proto):
+    """True, если установленный Xray понимает конфиг с данным outbound-протоколом.
+    Проверяется ОДИН раз через `xray run -test` (без реального соединения)."""
+    if proto in _XRAY_PROTO_OK:
+        return _XRAY_PROTO_OK[proto]
+    ok = True
+    try:
+        settings = {"version": 2} if proto == "hysteria" else {}
+        cfg = {
+            "log": {"loglevel": "none"},
+            "inbounds": [{"port": 0, "listen": "127.0.0.1", "protocol": "http"}],
+            "outbounds": [{"protocol": proto, "settings": settings}],
+        }
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
+            json.dump(cfg, tmp)
+            path = tmp.name
+        r = subprocess.run([XRAY_BIN, "run", "-c", path, "-test"],
+                           capture_output=True, text=True, timeout=8)
+        out = (r.stdout or "") + (r.stderr or "")
+        if "unknown config id" in out:
+            ok = False
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    except Exception:
+        pass
+    _XRAY_PROTO_OK[proto] = ok
+    return ok
+
 def safe_base64_decode(s):
     s = s.strip().replace('\n', '').replace('\r', '').replace(' ', '')
     try:
@@ -349,8 +462,9 @@ def safe_base64_decode(s):
             return ""
 
 def extract_links(text):
-    # ИСПРАВЛЕНИЕ РЕГУЛЯРКИ: Теперь не обрезает гигантские xhttp/reality ссылки с пробелами
-    regex = r"(?i)((?:vless|vmess|trojan)://[^\r\n\"'<>]+)"
+    # ИСПРАВЛЕНИЕ РЕГУЛЯРКИ: Теперь не обрезает гигантские xhttp/reality ссылки с пробелами.
+    # (?<![\w]) — защита от ложных срабатываний внутри "wss://" и т.п.
+    regex = r"(?i)(?<![\w])((?:vless|vmess|trojan|ss|hysteria2|hy2)://[^\r\n\"'<>]+)"
     links = re.findall(regex, text)
     decoded = safe_base64_decode(text)
     if decoded:
@@ -495,6 +609,61 @@ def parse_trojan(config_str):
         return conf
     except: return None
 
+def parse_shadowsocks(config_str):
+    """Разбирает ss:// ссылку (SIP002): base64(method:password)@host:port, или
+    весь авторитет в base64, или открытый method:password@host:port."""
+    try:
+        body = config_str.split('://', 1)[1].split('#')[0].split('?', 1)[0]
+        if '@' in body:
+            userinfo, hostport = body.rsplit('@', 1)
+            if ':' not in userinfo:
+                userinfo = safe_base64_decode(userinfo)  # base64(method:password)
+            method, password = userinfo.split(':', 1)
+        else:
+            dec = safe_base64_decode(body)  # base64(method:password@host:port)
+            if not dec:
+                return None
+            userinfo, hostport = dec.rsplit('@', 1)
+            method, password = userinfo.split(':', 1)
+        if ']' in hostport:
+            host, port = hostport.rsplit(':', 1)
+            host = host.replace('[', '').replace(']', '')
+        else:
+            host, port = hostport.rsplit(':', 1)
+        return {
+            "protocol": "shadowsocks", "ip": host, "port": int(port),
+            "uuid": password, "type": "tcp", "security": "none",
+            "method": method, "flow": "", "sni": "", "pbk": "", "sid": "", "spx": "/",
+            "path": "/", "host": "", "fp": "chrome", "serviceName": "", "mode": "", "authority": "",
+            "extra": "", "original": config_str, "country": "XX", "real_delay": 9999, "speed_mbps": 0.0
+        }
+    except: return None
+
+def parse_hysteria2(config_str):
+    """Разбирает hysteria2://password@host:port?sni=...&insecure=1#name (и hy2://)."""
+    try:
+        body = config_str.split('://', 1)[1].split('#')[0]
+        if '@' not in body:
+            return None
+        password, rest = body.rsplit('@', 1)
+        hostport, _, query = rest.partition('?')
+        params = parse_qs(query) if query else {}
+        if ']' in hostport:
+            host, port = hostport.rsplit(':', 1)
+            host = host.replace('[', '').replace(']', '')
+        else:
+            host, port = hostport.rsplit(':', 1)
+        return {
+            "protocol": "hysteria2", "ip": host, "port": int(port), "uuid": password,
+            "type": "udp", "security": "tls",
+            "flow": "", "sni": params.get('sni', [''])[0], "pbk": "", "sid": "", "spx": "/",
+            "path": "/", "host": "", "fp": params.get('fp', ['chrome'])[0],
+            "serviceName": "", "mode": "", "authority": params.get('authority', [''])[0],
+            "extra": params.get('obfs-password', [''])[0],
+            "original": config_str, "country": "XX", "real_delay": 9999, "speed_mbps": 0.0
+        }
+    except: return None
+
 def search_github_configs():
     logger.info("🔍 Ищем свежие конфиги на GitHub (Live Search)...")
     headers = {"Accept": "application/vnd.github.v3+json"}
@@ -528,8 +697,11 @@ def fetch_source(url):
     return []
 
 def generate_xray_config(server, local_port):
+    # Для hysteria2 протокол в конфиге Xray называется "hysteria" (version=2),
+    # auth живёт в streamSettings.hysteriaSettings — см. ветку ниже.
+    xray_proto = "hysteria" if server['protocol'] == 'hysteria2' else server['protocol']
     outbound = {
-        "protocol": server['protocol'], "settings": {},
+        "protocol": xray_proto, "settings": {},
         "streamSettings": {"network": server['type'], "security": server['security']}
     }
     
@@ -543,6 +715,19 @@ def generate_xray_config(server, local_port):
         outbound['settings'] = {"vnext": [{"address": server['ip'], "port": server['port'], "users": [user]}]}
     elif server['protocol'] == 'trojan':
         outbound['settings'] = {"servers": [{"address": server['ip'], "port": server['port'], "password": server['uuid']}]}
+    elif server['protocol'] == 'shadowsocks':
+        outbound['settings'] = {"servers": [{
+            "address": server['ip'], "port": server['port'],
+            "method": server.get('method', 'aes-256-gcm'),
+            "password": server['uuid'],
+        }]}
+    elif server['protocol'] == 'hysteria2':
+        # settings для hysteria2 (см. infra/conf/hysteria.go)
+        outbound['settings'] = {
+            "version": 2,
+            "address": server['ip'],
+            "port": server['port'],
+        }
     else: 
         outbound['settings'] = {"vnext": [{"address": server['ip'], "port": server['port'], "users": [{"id": server['uuid'], "alterId": 0, "security": "auto"}]}]}
 
@@ -551,7 +736,24 @@ def generate_xray_config(server, local_port):
         path = '/' + path
 
     # --- Настройка транспортов ---
-    if server['type'] == 'ws':
+    if server['protocol'] == 'hysteria2':
+        # Hysteria2 — отдельный транспорт (QUIC): network=hysteria, auth в hysteriaSettings
+        # ВНИМАНИЕ: с Xray >= v25 поле "allowInsecure" УДАЛЕНО (мигрировано в
+        # pinnedPeerCertSha256), поэтому его здесь нет — иначе конфиг не загрузится.
+        outbound['streamSettings'] = {
+            "network": "hysteria",
+            "security": "tls",
+            "tlsSettings": {
+                "serverName": server.get('sni', server['ip']),
+                "fingerprint": server.get('fp', 'chrome'),
+            },
+            "hysteriaSettings": {
+                "version": 2,
+                "auth": server['uuid'],
+                "udpIdleTimeout": 60,
+            },
+        }
+    elif server['type'] == 'ws':
         ws_set = {"path": path}
         if server.get('host'): ws_set["headers"] = {"Host": server['host']}
         outbound["streamSettings"]["wsSettings"] = ws_set
@@ -599,7 +801,7 @@ def generate_xray_config(server, local_port):
         
     # --- Настройка TLS / Reality ---
     tls_set = {"serverName": server.get('sni', ''), "fingerprint": server.get('fp', 'chrome')}
-    if server['security'] == 'tls':
+    if server['security'] == 'tls' and server['protocol'] != 'hysteria2':
         outbound["streamSettings"]["tlsSettings"] = tls_set
     elif server['security'] == 'reality':
         reality_set = tls_set.copy()
@@ -784,10 +986,26 @@ def main():
         logger.error(f"❌ ОШИБКА: Не удалось найти {XRAY_BIN}")
         return
 
+    # ── Включённые протоколы и поддержка их установленным Xray ──
+    enabled_list = sorted(ENABLED_PROTOCOLS)
+    logger.info(f"🎛 Включённые протоколы: {', '.join(enabled_list)}")
+    unsupported = []
+    for p in enabled_list:
+        probe_proto = XRAY_PROTO_BY_INTERNAL.get(p, p)
+        if not xray_supports_protocol(probe_proto):
+            unsupported.append(p)
+    if unsupported:
+        logger.warning(
+            f"⚠️ Установленный Xray НЕ поддерживает: {', '.join(unsupported)} — их узлы будут пропущены. "
+            f"Обнови Xray (перезапусти скрипт — он сам скачает последнюю версию) или задай V1A_XRAY_VERSION"
+        )
+
     history_data = load_history()
 
     # ── Загружаем старые серверы из прошлого subscription (лежит в репо) ──
     prev_servers = load_previous_subscription()
+    if unsupported:
+        prev_servers = [s for s in prev_servers if s['protocol'] not in unsupported]
 
     all_configs = []
 
@@ -800,10 +1018,7 @@ def main():
         for f in concurrent.futures.as_completed(futures):
             links = f.result()
             for link in links:
-                parsed = None
-                if link.lower().startswith("vless"): parsed = parse_vless(link)
-                elif link.lower().startswith("trojan"): parsed = parse_trojan(link)
-                else: parsed = parse_vmess(link)
+                parsed = parse_link_into_server(link)
                 if parsed: all_configs.append(parsed)
 
     # Загружаем серверы из локального файла my_source
@@ -814,10 +1029,7 @@ def main():
                 local_links = extract_links(lf.read())
                 logger.info(f"📁 Найдено {len(local_links)} серверов в {LOCAL_SOURCE_FILE}")
                 for link in local_links:
-                    parsed = None
-                    if link.lower().startswith("vless"): parsed = parse_vless(link)
-                    elif link.lower().startswith("trojan"): parsed = parse_trojan(link)
-                    else: parsed = parse_vmess(link)
+                    parsed = parse_link_into_server(link)
                     if parsed: all_configs.append(parsed)
         except Exception as e:
             logger.error(f"❌ Ошибка чтения {LOCAL_SOURCE_FILE}: {e}")
@@ -875,6 +1087,12 @@ def main():
     # ================== STAGE 1 ==================
     # Массовое тестирование скорости: НОВЫЕ живые + старые с просроченной скоростью
     to_speed_test = new_alive + prev_recheck
+    # Отбрасываем узлы протоколов, которых не умеет установленный Xray
+    if unsupported:
+        filtered = [s for s in to_speed_test if s['protocol'] not in unsupported]
+        if len(filtered) != len(to_speed_test):
+            logger.info(f"⏭ Пропущено узлов неподдерживаемых протоколов: {len(to_speed_test) - len(filtered)}")
+        to_speed_test = filtered
     tested_servers = []
     fail_stats = {"tcp_fail": 0, "trace_http": 0, "yt_fail": 0, "xray_error": 0, "unknown": 0}
     logger.info(f"⚡ ЭТАП 1: Тестирование скорости (Xray). Workers: {MAX_WORKERS}... Кандидатов: {len(to_speed_test)}")
@@ -1005,10 +1223,7 @@ def main():
                 links = extract_links(resp.text)
                 if links:
                     base_link = links[0]
-                    parsed = None
-                    if base_link.lower().startswith("vless"): parsed = parse_vless(base_link)
-                    elif base_link.lower().startswith("trojan"): parsed = parse_trojan(base_link)
-                    else: parsed = parse_vmess(base_link)
+                    parsed = parse_link_into_server(base_link)
 
                     if parsed:
                         parsed['custom_name'] = node_info['name']

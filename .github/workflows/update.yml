@@ -31,12 +31,19 @@ jobs:
           pip install requests geoip2 aiohttp aiohttp-socks PySocks urllib3 maxminddb
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: ⚙️ Setup Xray Core
+      - name: ⚙️ Setup Xray Core (последняя версия)
         run: |
-          if [ ! -f ./xray ] || [ ! -x ./xray ]; then
-            curl -sL https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o xray.zip
+          # Всегда берём ПОСЛЕДНЮЮ версию Xray: hysteria2 поддерживается только в v25+,
+          # а старый бинарник из репозитория мог устареть.
+          LATEST="$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)"
+          CURRENT="$(./xray version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)"
+          if [ ! -x ./xray ] || [ "${CURRENT}" != "${LATEST#v}" ]; then
+            echo "⬇️ Обновляю Xray: ${CURRENT:-нет} -> ${LATEST}"
+            curl -sL "https://github.com/XTLS/Xray-core/releases/download/${LATEST}/Xray-linux-64.zip" -o xray.zip
             unzip -o xray.zip xray geoip.dat geosite.dat 2>/dev/null || true
             rm -f xray.zip
+          else
+            echo "✅ Xray уже актуален: ${CURRENT}"
           fi
           chmod +x ./xray
 

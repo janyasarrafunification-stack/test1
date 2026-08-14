@@ -366,6 +366,23 @@ def get_free_port():
         s.bind(('', 0))
         return s.getsockname()[1]
 
+def detect_test_location():
+    """Определяет регион, из которого РЕАЛЬНО выполняется тест (без прокси).
+
+    Важно: если скрипт крутится в GitHub Actions (США/ЕС) или на зарубежном VPS,
+    результаты НЕ отражают доступность серверов из РФ: сервер, живой оттуда,
+    может быть заблокирован в РФ (DPI/РКН), и наоборот.
+    """
+    try:
+        r = requests.get("https://cloudflare.com/cdn-cgi/trace", timeout=6)
+        if r.status_code == 200:
+            m = re.search(r'loc=([A-Z]{2})', r.text)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return None
+
 def load_history():
     if os.path.exists(HISTORY_FILE):
         try:
@@ -596,12 +613,14 @@ def generate_xray_config(server, local_port):
     }
 
 # --- ЭТАП 1: МАССОВОЕ ТЕСТИРОВАНИЕ (Real Ping через HTTP) ---
+# Возвращает (server, None) при успехе или (None, причина) при отказе,
+# чтобы STAGE 1 мог показать статистику, ПОЧЕМУ серверы отсеиваются.
 def deep_verify(server):
     try:
         with socket.create_connection((server['ip'], server['port']), timeout=TCP_TIMEOUT):
             pass
     except: 
-        return None
+        return None, 'tcp_fail'
 
     local_port = get_free_port()
     config = generate_xray_config(server, local_port)
@@ -629,14 +648,14 @@ def deep_verify(server):
             match = re.search(r'loc=([A-Z]{2})', resp.text)
             if match: real_country = match.group(1)
         else:
-            return None 
+            return None, 'trace_http'
             
         # YouTube 204 Test
         yt_resp = requests.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=4.5)
         if yt_resp.status_code == 204:
             youtube_ok = True
         else:
-            return None 
+            return None, 'yt_fail'
 
         # Speed Test
         dl_start = time.perf_counter()
@@ -654,7 +673,7 @@ def deep_verify(server):
                 speed_mbps = round((downloaded_bytes * 8 / 1_000_000) / duration, 2)
                 
     except Exception:
-        pass
+        return None, 'xray_error'
     finally:
         if proc:
             proc.terminate()
@@ -666,8 +685,8 @@ def deep_verify(server):
         server['real_delay'] = latency
         server['country'] = real_country
         server['speed_mbps'] = speed_mbps
-        return server
-    return None
+        return server, None
+    return None, 'unknown'
 
 # --- ЭТАП 2: ФИНАЛЬНОЕ ПОСЛЕДОВАТЕЛЬНОЕ ТЕСТИРОВАНИЕ ТОП-10 ---
 def measure_node_stats_sequential(server, check_speed=True):
@@ -750,6 +769,16 @@ def get_speed_badge(speed_mbps):
 # --- MAIN ---
 def main():
     logger.info(f"🚀 START: V1A Smart Selector (Target: {TOTAL_SERVERS_WANTED})")
+
+    # Откуда реально идёт тест? (GitHub Actions = США/ЕС, а не РФ)
+    test_loc = detect_test_location()
+    if test_loc:
+        loc_name = COUNTRIES_RU.get(test_loc, test_loc)
+        logger.info(f"🛰 Регион тестирования: {loc_name} ({test_loc}). "
+                    f"Доступность из РФ может отличаться из-за блокировок (DPI/РКН).")
+    else:
+        logger.info("🛰 Не удалось определить регион тестирования (сеть недоступна?).")
+
     install_xray_core()
     if not os.path.exists(XRAY_BIN):
         logger.error(f"❌ ОШИБКА: Не удалось найти {XRAY_BIN}")
@@ -842,14 +871,31 @@ def main():
     # Массовое тестирование скорости: НОВЫЕ живые + старые с просроченной скоростью
     to_speed_test = new_alive + prev_recheck
     tested_servers = []
+    fail_stats = {"tcp_fail": 0, "trace_http": 0, "yt_fail": 0, "xray_error": 0, "unknown": 0}
     logger.info(f"⚡ ЭТАП 1: Тестирование скорости (Xray). Workers: {MAX_WORKERS}... Кандидатов: {len(to_speed_test)}")
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [executor.submit(deep_verify, s) for s in to_speed_test]
         for f in concurrent.futures.as_completed(futures):
-            res = f.result()
+            res, reason = f.result()
             if res:
                 tested_servers.append(res)
                 logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP Пинг: {res['real_delay']}ms | Скорость: {res['speed_mbps']} Mbps")
+            else:
+                fail_stats[reason] = fail_stats.get(reason, 0) + 1
+
+    # ВАЖНО: ВСЕ кандидаты тестируются (40 параллельно), но в лог пишутся только
+    # прошедшие. Итоговая статистика показывает реальную картину.
+    slow = sum(1 for s in tested_servers if s['speed_mbps'] < SPEED_HARD_LIMIT)
+    logger.info(
+        f"📊 ЭТАП 1 итог: протестировано {len(to_speed_test)} | прошло проверку {len(tested_servers)} "
+        f"(из них медленнее {SPEED_HARD_LIMIT} Mbps: {slow}) | отсеяно {len(to_speed_test) - len(tested_servers)}"
+    )
+    logger.info(
+        f"   Причины отсева: TCP-недоступен: {fail_stats.get('tcp_fail', 0)} | "
+        f"Xray-туннель не работает: {fail_stats.get('xray_error', 0)} | "
+        f"Cloudflare trace не ответил: {fail_stats.get('trace_http', 0)} | "
+        f"YouTube 204 не прошёл: {fail_stats.get('yt_fail', 0)}"
+    )
 
     # Обновляем историю и собираем пул
     pool = []
@@ -887,6 +933,9 @@ def main():
         register_history(s)
         s['score'] = calculate_quality_score(s, history_data)
         if s['speed_mbps'] >= SPEED_HARD_LIMIT:
+            # ОПТИМИЗАЦИЯ: скорость измерена ТОЛЬКО ЧТО в STAGE 1 —
+            # в STAGE 2 не качаем 5MB повторно, только TCP-пинг и страна.
+            s['skip_speed'] = True
             pool.append(s)
 
     save_history(history_data)
@@ -912,7 +961,11 @@ def main():
     # Применяем лимит подписки
     final_parsed_selection = pool[:MAX_SUBSCRIPTION_SERVERS]
 
-    logger.info(f"📊 В подписку попадает {len(final_parsed_selection)} узлов (лимит {MAX_SUBSCRIPTION_SERVERS}).")
+    # Разбивка финального списка: сколько старых (из прошлой подписки) и сколько новых
+    n_old_final = sum(1 for s in final_parsed_selection if s.get('from_prev'))
+    n_new_final = len(final_parsed_selection) - n_old_final
+    logger.info(f"📊 В подписку попадает {len(final_parsed_selection)} узлов (лимит {MAX_SUBSCRIPTION_SERVERS}): "
+                f"старых (проверенных ранее) — {n_old_final}, новых — {n_new_final}.")
 
     logger.info("💎 Загрузка несгораемых узлов из подписок с ротацией...")
     hardcoded_servers = []

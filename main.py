@@ -131,7 +131,19 @@ def load_previous_subscription():
                 extract_ping_speed_from_link(srv)
                 srv['from_prev'] = True   # метка: сервер из старого списка
                 servers.append(srv)
-        logger.info(f"📂 Прошлый subscription содержит {len(servers)} серверов.")
+        # ФИКС: дедупликация по ip:port. Из-за отсутствия дедупликации пула
+        # в файле накапливались десятки копий одного узла (1193 строки на 449 узлов).
+        raw_count = len(servers)
+        seen = set()
+        deduped = []
+        for srv in servers:
+            nid = f"{srv['ip']}:{srv['port']}"
+            if nid in seen:
+                continue
+            seen.add(nid)
+            deduped.append(srv)
+        servers = deduped
+        logger.info(f"📂 Прошлый subscription содержит {len(servers)} уникальных серверов (было строк: {raw_count}).")
     except Exception as e:
         logger.warning(f"⚠️ Не удалось прочитать прошлый subscription: {e}")
     return servers
@@ -402,7 +414,10 @@ def calculate_quality_score(server, history_data):
 
 def parse_vmess(config_str):
     try:
-        b64_str = config_str[8:]
+        # ФИКС: отрезаем #фрагмент (имя узла) перед base64-декодированием.
+        # Раньше b64_str брался целиком вместе с "#name" -> декодирование ломалось,
+        # и ВСЕ vmess-узлы выпадали при повторном чтении subscription (81 из 81).
+        b64_str = config_str[8:].split('#')[0]
         json_str = safe_base64_decode(b64_str)
         if not json_str: return None
         data = json.loads(json_str)
@@ -647,7 +662,7 @@ def deep_verify(server):
             except: proc.kill()
         if os.path.exists(config_path): os.remove(config_path)
 
-    if latency and youtube_ok:
+    if latency is not None and youtube_ok:
         server['real_delay'] = latency
         server['country'] = real_country
         server['speed_mbps'] = speed_mbps
@@ -657,7 +672,7 @@ def deep_verify(server):
 # --- ЭТАП 2: ФИНАЛЬНОЕ ПОСЛЕДОВАТЕЛЬНОЕ ТЕСТИРОВАНИЕ ТОП-10 ---
 def measure_node_stats_sequential(server, check_speed=True):
     # 1. Замер чистого TCP Пинга (для отображения на сайте)
-    new_latency = get_accurate_ping(server['ip'], server['port'], attempts=5)
+    new_latency = get_accurate_ping(server['ip'], server['port'], attempts=3)
 
     local_port = get_free_port()
     config = generate_xray_config(server, local_port)
@@ -807,10 +822,15 @@ def main():
 
     # ================== STAGE 0 ==================
     # Дешёвый TCP-пинг НОВЫХ серверов
-    logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр новых (TCP). Кандидатов: {len(new_configs)}...")
+    # ОПТИМИЗАЦИЯ: узлы, которые уже живы в прошлой подписке (alive_prev),
+    # не проходят дорогой deep_verify повторно — они уже в пуле и будут
+    # перепроверены в STAGE 2. Это экономит десятки минут на каждом запуске.
+    alive_prev_ids = {node_id_of(s) for s in alive_prev}
+    fresh_candidates = [s for s in new_configs if node_id_of(s) not in alive_prev_ids]
+    logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр новых (TCP). Кандидатов: {len(fresh_candidates)} (уже живых из прошлой подписки пропущено: {len(new_configs) - len(fresh_candidates)})...")
     alive_configs = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
-        futures = [executor.submit(ping_filter, s) for s in new_configs]
+        futures = [executor.submit(ping_filter, s) for s in fresh_candidates]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
             if res:
@@ -871,6 +891,20 @@ def main():
 
     save_history(history_data)
 
+    # ФИКС: финальная дедупликация пула по ip:port (один узел = одна строка в подписке).
+    # Один и тот же узел может попасть в пул и как "старый", и как "новый" из источников —
+    # без этого дубликаты накапливались с каждым запуском.
+    seen_nodes = set()
+    dedup_pool = []
+    for s in pool:
+        nid = node_id_of(s)
+        if nid in seen_nodes:
+            continue
+        seen_nodes.add(nid)
+        dedup_pool.append(s)
+    pool = dedup_pool
+    logger.info(f"🗂 Уникальных узлов в пуле: {len(pool)}.")
+
     # Приоритет сортировки: старые живые впереди (стабильные), затем новые.
     # Внутри группы — по пингу и скору.
     pool.sort(key=lambda x: (0 if x.get('from_prev') else 1, x.get('real_delay', 9999), -x.get('score', 0)))
@@ -927,6 +961,24 @@ def main():
 
     # ================== STAGE 2 ==================
     final_10_servers = hardcoded_servers + final_parsed_selection
+    # ФИКС: финальная дедупликация и hardcoded-узлов (несколько «несгораемых» подписок
+    # могут отдать один и тот же узел, и пул может пересекаться с ними).
+    # Предпочитаем hardcoded-версию (custom_name), обычные дубли отбрасываем.
+    seen_final = set()
+    dedup_final = []
+    for s in final_10_servers:
+        nid = node_id_of(s)
+        if nid in seen_final:
+            # если дубль уже добавлен как обычный узел, а этот — hardcoded, меняем местами
+            if 'custom_name' in s:
+                for i, prev in enumerate(dedup_final):
+                    if node_id_of(prev) == nid and 'custom_name' not in prev:
+                        dedup_final[i] = s
+                        break
+            continue
+        seen_final.add(nid)
+        dedup_final.append(s)
+    final_10_servers = dedup_final
     logger.info(f"\n⚡ ЭТАП 2: Индивидуальная проверка ({len(final_10_servers)} узлов). Замер точного TCP Пинга ⚡")
 
     # Перепроверяем параллельно (каждый Xray-процесс на своём порту), чтобы

@@ -11,11 +11,25 @@ import subprocess
 import tempfile
 import stat
 import logging
+import threading
 import urllib3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, parse_qs
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Общая сессия: keep-alive и переиспользование соединений ускоряют массовые
+# запросы (источники, Cloudflare trace/speed) и снижают число сбоев.
+# Пул соединений >= числа воркеров, иначе потоки ждут свободный коннект.
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "V1A-Scanner/1.0"})
+_retry = Retry(total=1, backoff_factor=0.3, status_forcelist=[429, 500, 502, 503, 504])
+_adapter = HTTPAdapter(max_retries=_retry, pool_connections=64, pool_maxsize=64)
+SESSION.mount("https://", _adapter)
+SESSION.mount("http://", _adapter)
 
 # --- НАСТРОЙКИ ЛОГИРОВАНИЯ ---
 logger = logging.getLogger("V1A_Scanner")
@@ -28,6 +42,7 @@ logger.addHandler(console_handler)
 # --- НАСТРОЙКИ ---
 GITHUB_TOKEN = os.getenv("TOKEN", "") 
 SOURCES = [
+    # --- Базовые источники ---
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS_mobile.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-checked.txt",
@@ -35,7 +50,79 @@ SOURCES = [
     "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
     "https://raw.githubusercontent.com/terik21/HiddifySubs-VlessKeys/refs/heads/main/WhiteKeys",
-    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt"
+    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt",
+
+    # --- Новые источники: raw-подписки И обычные txt (истоники.txt) ---
+    # GitHub blob-ссылки нормализованы в raw; корни репо без пути к файлу отброшены.
+    # Пустые/битые строки и дубликаты НЕ страшны: их отбрасывают extract_links
+    # и collect_parsed_servers — скрипт не падает на мусорном источнике.
+    "https://raw.githubusercontent.com/FLEXIY0/matryoshka-vpn/main/configs/russia_whitelist.txt",
+    "https://raw.githubusercontent.com/LimeHi/LimeVPN/main/whitelist.txt",
+    "https://raw.githubusercontent.com/dgshsh031-code/free-vpn-sub/main/sub.txt",
+    "https://raw.githubusercontent.com/vit352018/Claude-VPN-Parcer/main/output/WIFI_BL.txt",
+    "https://raw.githubusercontent.com/vit352018/Claude-VPN-Parcer/main/output/MOB_WL.txt",
+    "https://raw.githubusercontent.com/aviamastersgh/vpn-free-russia/main/ru_configs.txt",
+    "https://raw.githubusercontent.com/aviamastersgh/vpn-free-russia/main/verified_configs.txt",
+    "https://raw.githubusercontent.com/TonyPro13/vpn-subscription/main/output/subscription.txt",
+    "https://raw.githubusercontent.com/MELVPNBOT/BrawlVPN/main/alive.txt",
+    "https://raw.githubusercontent.com/sepeli88/My-sub/main/subscription.txt",
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN/main/AetrisVPN.txt",
+    "https://raw.githubusercontent.com/ali13788731/vpn/main/sub_raw.txt",
+    "https://raw.githubusercontent.com/SoliSpirit/SolVPN/main/Subscribes/sub1.txt",
+    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/16.txt",
+    "https://raw.githubusercontent.com/hiztin/VLESS-PO-GRIBI/main/deploy/subscriptions/1.txt",
+    "https://raw.githubusercontent.com/hiztin/VLESS-PO-GRIBI/main/deploy/subscriptions/11.txt",
+    "https://raw.githubusercontent.com/whoahaow/rjsxrd/main/githubmirror/bypass/bypass-all.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
+    "https://raw.githubusercontent.com/yitong2333/proxy-minging/main/v2ray.txt",
+    "https://raw.githubusercontent.com/Hidashimora/free-vpn-anti-rkn/main/configs/1.2.txt",
+    "https://raw.githubusercontent.com/miladtahanian/V2RayCFGDumper/main/sub.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
+    "https://etoneya.su/whitelist",
+    "https://raw.githubusercontent.com/CidVpn/cid-vpn-config/main/general.txt",
+    "https://gitverse.ru/api/repos/cid-uskoritel/cid-white/raw/branch/master/whitelist.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
+    "https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/mixed_iran.txt",
+    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/26.txt",
+    "https://raw.githubusercontent.com/R3ZARAHIMI/tg-v2ray-configs-every2h/main/conf-week.txt",
+    "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Sub1.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Sub2.txt",
+    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector_Py/main/sub/Mix/mix.txt",
+    "https://raw.githubusercontent.com/FSystem88/vless-keys/main/keys.txt",
+    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector/main/sub/mix",
+    "https://raw.githubusercontent.com/shabane/kamaji/master/hub/merged.txt",
+    "https://raw.githubusercontent.com/wuqb2i4f/xray-config-toolkit/main/output/base64/mix-uri",
+    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/23.txt",
+    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vless.txt",
+    "https://sub.vlessfo.ru/vlessforu/working_configs.txt",
+    "https://n2wfe.burmaldavpn.online/EfT-CvVJdCYBa7dd",
+    "https://raw.githubusercontent.com/ksenkovsolo/HardVPN-bypass-WhiteLists-/main/vpn-lte/WHITELIST-ALL.txt",
+    "https://raw.githubusercontent.com/prominbro/sub/main/212.txt",
+    "https://gist.githubusercontent.com/LIKE-FURRY/ea91d3f11eb50e849c6007754417dc59/raw/d40546055dd1b382d3a2e4f6f810b68d9406cacf/GothicVPNFree-iz-githab",
+    "https://raw.githubusercontent.com/xolirx/list-check/main/subs/6788436831_lte.txt?v=1786267086",
+    "https://raw.githubusercontent.com/xolirx/list-check/main/subs/6788436831_black.txt?v=1786267051",
+    "https://short-url.cc/Shishanivpn1",
+    "https://gist.githubusercontent.com/sori99346-cyber/bd11c98ceecbee68bf8aa7452a10068a/raw/49bcade516dc30646fca8eb12e902493920114c9/vpn.txt",
+    "https://gist.githubusercontent.com/sori99346-cyber/683e002b7255b1da0c9c5204272bfeab/raw/9ad935bd17429ed21a020f40d5180a23bc5f45c2/vpn.txt",
+    "https://gist.githubusercontent.com/sori99346-cyber/ed70bd2f52b04ce73a578f6ed90f7952/raw/9edc274426f05c534f2f1b553989fbb4d862f88c/happ.txt",
+    "https://gist.githubusercontent.com/sori99346-cyber/ddb62003fb73adc734c772aa1d9588e6/raw/2c96bdd9077b8bd48c8006af3ec328994709d9a9/happ.txt",
+    "https://gist.githubusercontent.com/sori99346-cyber/81672bad6e3fcf8f4ba7dc5c94dd5d2d/raw/de8193dafbbd016b7d96222d77764592ec532570/@ConfigiHapp.txt",
+    "https://ru-sub.whit3.net/sub/_wW4Z5cBRB4d6ypL",
+    "https://sub.aska.lol/free",
+    "https://sub.aska.lol/Ux7lmK0xkIl2",
+    "https://gist.githubusercontent.com/Semenhach1/49b3bdf4e07c64d28b7c79ee185ecb3b/raw/r_8742354695.txt",
+    "https://gist.githubusercontent.com/LIKE-FURRY/af64b3ca475a5a66f0a47c1e07038fd5/raw/@FURRY_VPN_FREE-PREMIUM-CLUCHI-FILTR-IZ-GITHAB",
+    "https://raw.githubusercontent.com/LimeHi/LimeVPN/main/blacklist.txt",
+    "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/BLACK_FULL.txt",
+    "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/WHITE_FULL.txt",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/V2Ray-Config-By-EbraSha-All-Type.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub.txt",
+    "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
+    "https://raw.githubusercontent.com/vveg26/v2ray/main/Sub",
+    "https://raw.githubusercontent.com/v2ray-mobi/v2ray-configs/main/sub",
+    "https://raw.githubusercontent.com/yuandj/sing-box/main/sub",
+    "https://raw.githubusercontent.com/jackmo-ai/v2ray-configs/main/sub",
 ]
 
 XRAY_BIN = "./xray"
@@ -59,10 +146,10 @@ JSON_FILE = 'stats.json'
 # Больше включённых протоколов = больше кандидатов и дольше тест.
 ENABLED_PROTOCOLS = {
     "vless",          # VLESS — по умолчанию
-    # "vmess",        # VMess
-    # "trojan",       # Trojan
-    # "shadowsocks",  # Shadowsocks
-    # "hysteria2",    # Hysteria2 (требует Xray >= v25, см. выше)
+    "vmess",        # VMess
+    "trojan",       # Trojan
+    "shadowsocks",  # Shadowsocks
+    "hysteria2",    # Hysteria2 (требует Xray >= v25, см. выше)
 }
 
 # Префикс ссылки -> внутреннее имя протокола (для LINK_PROTO_NAMES)
@@ -165,6 +252,37 @@ def parse_link_into_server(link):
     except Exception:
         return None
 
+def collect_parsed_servers(links):
+    """Парсит строки-ссылки в серверы, пропуская мусор.
+
+    Источники бывают разными (raw-подписки, обычные txt) и содержат пустые
+    строки, HTML-страницы, невалидные ссылки и дубликаты. Всё это молча
+    отбрасывается здесь, чтобы скрипт не падал и не тестировал одно и то же.
+    Возвращает (список серверов, количество отброшенных строк).
+    """
+    servers, seen_links, skipped = [], set(), 0
+    for link in links:
+        if not isinstance(link, str):
+            skipped += 1
+            continue
+        link = link.strip()
+        if not link or '://' not in link:
+            skipped += 1
+            continue
+        if link in seen_links:
+            continue   # дубликат ссылки — пропускаем без счётчика ошибок
+        seen_links.add(link)
+        srv = None
+        try:
+            srv = parse_link_into_server(link)
+        except Exception:
+            srv = None
+        if srv:
+            servers.append(srv)
+        else:
+            skipped += 1
+    return servers, skipped
+
 def load_previous_subscription():
     """Читает текущий subscription (лежит в репо), расшифровывает и возвращает старые серверы."""
     servers = []
@@ -245,15 +363,32 @@ SPEED_TEST_TIMEOUT = 4.5    # Лимит на скачивание 5MB. 6.0 -> 4
 TOTAL_SERVERS_WANTED = 15   # (справочно) Лимит количества больше НЕ применяется — в подписку идут все подходящие
 SPEED_HARD_LIMIT = 5.0      # Минимальная скорость для отбора (Mbps)
 
+# --- НАДЁЖНОСТЬ ТЕСТИРОВАНИЯ ---
+PING_ATTEMPTS = int(os.getenv("V1A_PING_ATTEMPTS", "2"))           # Попыток TCP-пинга на узел
+STAGE1_MAX_SECONDS = int(os.getenv("V1A_STAGE1_MAX_SEC", "1500"))  # Лимит времени STAGE 1 (сек)
+XRAY_START_TIMEOUT = 3.0                                           # Ожидание готовности порта Xray
+
+# --- ИСТОЧНИКИ ДЛЯ ЗАМЕРА СКОРОСТИ ---
+# Основной — Cloudflare (anycast: отвечает почти из любой страны выхода туннеля).
+# Если CF недоступен с узла или отдаёт ошибку — пробуем резервные по порядку.
+SPEED_TEST_URLS = [
+    "https://speed.cloudflare.com/__down?bytes=5000000",
+    "https://cachefly.cachefly.net/5mb.test",
+    "https://proof.ovh.net/files/5Mb.dat",
+]
+
+# Предохранитель: обрезаем гигантские файлы источников (агрегаторы отдают 10+ МБ)
+MAX_SOURCE_CHARS = 15_000_000
+
 # --- ЛИМИТ ПОДПИСКИ ---
 # Максимальное число серверов в итоговом файле subscription.
 # Легко корректируется: увеличь/уменьши число здесь.
 MAX_SUBSCRIPTION_SERVERS = 1200
 
 # --- ПЕРИОД ПЕРЕПРОВЕРКИ СКОРОСТИ ---
-# Скорость уже проверенных (старых) серверов пере-тестируется раз в 24 часа.
-# Пинг при этом проверяется КАЖДЫЙ запуск (дёшево и быстро).
-SPEED_CHECK_INTERVAL = 24 * 3600  # секунды = 24 часа
+# Скорость уже проверенных (старых) серверов пере-тестируется раз в 8 часов
+# (пинг по-прежнему проверяется КАЖДЫЙ запуск — дёшево и быстро).
+SPEED_CHECK_INTERVAL = 8 * 3600  # секунды = 8 часов
 
 # ВАЖНО: Добавлена поддержка "urls" (списка) для ротации.
 HARDCODED_NODES = [
@@ -343,11 +478,14 @@ def get_accurate_ping(ip, port, attempts=3):
 # Быстро отсеивает мёртвые серверы ДО запуска дорогой проверки через Xray.
 # Возвращает сервер, если он отвечает, иначе None.
 def ping_filter(server):
-    try:
-        with socket.create_connection((server['ip'], server['port']), timeout=TCP_TIMEOUT):
-            return server
-    except:
-        return None
+    # Несколько попыток: одиночная потеря пакета не должна убить живой узел
+    for _ in range(max(1, PING_ATTEMPTS)):
+        try:
+            with socket.create_connection((server['ip'], server['port']), timeout=TCP_TIMEOUT):
+                return server
+        except Exception:
+            continue
+    return None
 
 def get_latest_xray_version():
     """Возвращает последнюю стабильную версию Xray (например '26.3.27').
@@ -358,7 +496,7 @@ def get_latest_xray_version():
     if pinned:
         return pinned.lstrip("v")
     try:
-        r = requests.get("https://api.github.com/repos/XTLS/Xray-core/releases/latest", timeout=8)
+        r = SESSION.get("https://api.github.com/repos/XTLS/Xray-core/releases/latest", timeout=8)
         if r.status_code == 200:
             tag = r.json().get("tag_name", "")
             if tag:
@@ -399,7 +537,7 @@ def install_xray_core():
     logger.info(f"📥 Xray core ({desired_version}) скачивается...")
     url = f"https://github.com/XTLS/Xray-core/releases/download/v{desired_version}/Xray-linux-64.zip"
     try:
-        r = requests.get(url, stream=True, timeout=60)
+        r = SESSION.get(url, stream=True, timeout=60)
         if r.status_code == 200:
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                 if 'xray' in z.namelist():
@@ -478,10 +616,56 @@ def extract_links(text):
             links.extend(re.findall(regex, dec_line))
     return list(set(links))
 
+# РАНЕЕ: get_free_port через bind(:0) имел гонку — при десятках параллельных
+# тестов два потока получали один порт, Xray второго падал, живой узел
+# помечался мёртвым. Теперь порт выдаёт атомарный аллокатор: уникальный среди
+# активных тестов + проверка фактической свободы порта в ОС.
+_PORT_LOCK = threading.Lock()
+_PORT_NEXT = 20000
+_PORTS_IN_USE = set()
+
 def get_free_port():
+    global _PORT_NEXT
+    with _PORT_LOCK:
+        for _ in range(25000):
+            port = _PORT_NEXT
+            _PORT_NEXT += 1
+            if _PORT_NEXT > 45000:
+                _PORT_NEXT = 20000
+            if port in _PORTS_IN_USE:
+                continue
+            probe = socket.socket()
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            finally:
+                probe.close()
+            _PORTS_IN_USE.add(port)
+            return port
+    # Фолбэк на старое поведение (практически недостижимо)
     with socket.socket() as s:
-        s.bind(('', 0))
-        return s.getsockname()[1]
+        s.bind(("", 0))
+        port = s.getsockname()[1]
+    with _PORT_LOCK:
+        _PORTS_IN_USE.add(port)
+    return port
+
+def release_port(port):
+    with _PORT_LOCK:
+        _PORTS_IN_USE.discard(port)
+
+def wait_xray_ready(port, timeout=XRAY_START_TIMEOUT):
+    """Ждём, пока Xray реально откроет локальный прокси-порт (вместо слепого sleep).
+    Инбаунд обычно поднимается за 50-150 мс -> тест быстрее и без ложных отказов."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                return True
+        except OSError:
+            time.sleep(0.05)
+    return False
 
 def detect_test_location():
     """Определяет регион, из которого РЕАЛЬНО выполняется тест (без прокси).
@@ -491,7 +675,7 @@ def detect_test_location():
     может быть заблокирован в РФ (DPI/РКН), и наоборот.
     """
     try:
-        r = requests.get("https://cloudflare.com/cdn-cgi/trace", timeout=6)
+        r = SESSION.get("https://cloudflare.com/cdn-cgi/trace", timeout=6)
         if r.status_code == 200:
             m = re.search(r'loc=([A-Z]{2})', r.text)
             if m:
@@ -671,32 +855,42 @@ def search_github_configs():
     logger.info("🔍 Ищем свежие конфиги на GitHub (Live Search)...")
     headers = {"Accept": "application/vnd.github.v3+json"}
     if GITHUB_TOKEN: headers["Authorization"] = f"token {GITHUB_TOKEN}"
-    
+
     links = []
+    # Дата динамическая: репозитории, обновлённые за последние 7 дней.
+    # Раньше дата была захардкожена -> со временем поиск выдавал пустоту.
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
     queries = ["vless reality", "trojan proxy"]
     for q in queries:
         try:
-            url = f"https://api.github.com/search/repositories?q={quote(q)}+pushed:>2026-02-25&sort=updated"
-            r = requests.get(url, headers=headers, timeout=5) # Оптимизировано: снижен таймаут
+            url = f"https://api.github.com/search/repositories?q={quote(q)}+pushed:>{since}&sort=updated"
+            r = SESSION.get(url, headers=headers, timeout=8) # Оптимизировано: снижен таймаут
             if r.status_code == 200:
                 data = r.json()
                 for item in data.get('items', [])[:2]: # Оптимизировано: меньше репозиториев
                     readme_url = f"https://raw.githubusercontent.com/{item['full_name']}/{item['default_branch']}/README.md"
                     try:
-                        rr = requests.get(readme_url, timeout=5)
+                        rr = SESSION.get(readme_url, timeout=10)
                         if rr.status_code == 200:
                             links.extend(extract_links(rr.text[:50000])) # Оптимизировано: лимит текста
-                    except: pass
-        except: pass
+                    except Exception: pass
+        except Exception: pass
     return list(set(links))
 
 def fetch_source(url):
+    # Таймауты: соединение 5 с, чтение до 20 с — большие txt-файлы успевают скачаться.
+    # Авто-ретраи через Retry-адаптер общей сессии.
+    # Любая ошибка (HTTP != 200, таймаут, битый ответ) -> [] : скрипт не падает,
+    # а просто пропускает источник.
     try:
-        resp = requests.get(url, timeout=5)
+        resp = SESSION.get(url, timeout=(5, 20))
         if resp.status_code == 200:
-            return extract_links(resp.text)
+            links = extract_links(resp.text[:MAX_SOURCE_CHARS])
+            logger.info(f"📥 Источник {url[:48]}... -> {len(links)} ссылок")
+            return links
+        logger.warning(f"⚠️ Источник {url[:48]}...: HTTP {resp.status_code}")
     except Exception as e:
-        logger.warning(f"⚠️ Ошибка источника {url[:30]}...: {e}")
+        logger.warning(f"⚠️ Ошибка источника {url[:40]}...: {e}")
     return []
 
 def generate_xray_config(server, local_port):
@@ -817,6 +1011,40 @@ def generate_xray_config(server, local_port):
         "outbounds": [outbound]
     }
 
+def measure_download_speed(proxies):
+    """Замер скорости (Mbps) скачиванием через туннель.
+
+    Перебирает SPEED_TEST_URLS по порядку (Cloudflare -> cachefly -> OVH),
+    пока какой-нибудь источник не ответит. Возвращает 0.0, если не ответил ни один.
+    Раньше был только Cloudflare: если он недоступен С ВЫХОДНОГО УЗЛА,
+    сервер получал speed=0 и ошибочно вылетал по порогу скорости.
+    """
+    for url in SPEED_TEST_URLS:
+        try:
+            dl_resp = SESSION.get(
+                url, proxies=proxies,
+                timeout=(2.0, SPEED_TEST_TIMEOUT), stream=True
+            )
+        except Exception:
+            continue   # источник недостижим — пробуем следующий
+        try:
+            if dl_resp.status_code != 200:
+                continue
+            dl_start = time.perf_counter()
+            downloaded_bytes = 0
+            for chunk in dl_resp.iter_content(chunk_size=8192):
+                if chunk: downloaded_bytes += len(chunk)
+                if time.perf_counter() - dl_start > SPEED_TEST_TIMEOUT: break
+            duration = time.perf_counter() - dl_start
+            if duration > 0 and downloaded_bytes > 0:
+                return round((downloaded_bytes * 8 / 1_000_000) / duration, 2)
+        except Exception:
+            continue   # обрыв потока — пробуем следующий источник
+        finally:
+            try: dl_resp.close()
+            except Exception: pass
+    return 0.0
+
 # --- ЭТАП 1: МАССОВОЕ ТЕСТИРОВАНИЕ (Real Ping через HTTP) ---
 # Возвращает (server, None) при успехе или (None, причина) при отказе,
 # чтобы STAGE 1 мог показать статистику, ПОЧЕМУ серверы отсеиваются.
@@ -842,12 +1070,13 @@ def deep_verify(server):
 
     try:
         proc = subprocess.Popen([XRAY_BIN, "-c", config_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.5)
+        if not wait_xray_ready(local_port, XRAY_START_TIMEOUT):
+            return None, 'xray_start'
         proxies = {"http": f"http://127.0.0.1:{local_port}", "https": f"http://127.0.0.1:{local_port}"}
 
         # CF Trace & Real Ping (HTTP latency)
         start = time.perf_counter()
-        resp = requests.get("https://cloudflare.com/cdn-cgi/trace", proxies=proxies, timeout=REAL_TEST_TIMEOUT)
+        resp = SESSION.get("https://cloudflare.com/cdn-cgi/trace", proxies=proxies, timeout=REAL_TEST_TIMEOUT)
         if resp.status_code == 200:
             latency = int((time.perf_counter() - start) * 1000)
             match = re.search(r'loc=([A-Z]{2})', resp.text)
@@ -856,26 +1085,14 @@ def deep_verify(server):
             return None, 'trace_http'
             
         # YouTube 204 Test
-        yt_resp = requests.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=3.0)
+        yt_resp = SESSION.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=3.0)
         if yt_resp.status_code == 204:
             youtube_ok = True
         else:
             return None, 'yt_fail'
 
-        # Speed Test
-        dl_start = time.perf_counter()
-        downloaded_bytes = 0
-        dl_resp = requests.get(
-            "https://speed.cloudflare.com/__down?bytes=5000000",
-            proxies=proxies, timeout=(2.0, SPEED_TEST_TIMEOUT), stream=True
-        )
-        if dl_resp.status_code == 200:
-            for chunk in dl_resp.iter_content(chunk_size=8192):
-                if chunk: downloaded_bytes += len(chunk)
-                if time.perf_counter() - dl_start > SPEED_TEST_TIMEOUT: break
-            duration = time.perf_counter() - dl_start
-            if duration > 0:
-                speed_mbps = round((downloaded_bytes * 8 / 1_000_000) / duration, 2)
+        # Speed Test (Cloudflare -> резервные источники при сбое)
+        speed_mbps = measure_download_speed(proxies)
                 
     except Exception:
         return None, 'xray_error'
@@ -885,6 +1102,7 @@ def deep_verify(server):
             try: proc.wait(timeout=0.5)
             except: proc.kill()
         if os.path.exists(config_path): os.remove(config_path)
+        release_port(local_port)
 
     if latency is not None and youtube_ok:
         server['real_delay'] = latency
@@ -892,6 +1110,18 @@ def deep_verify(server):
         server['speed_mbps'] = speed_mbps
         return server, None
     return None, 'unknown'
+
+# Повторная попытка для «мигающих» отказов: разовый сетевой сбой или медленный
+# старт Xray под нагрузкой не должен навсегда вычёркивать живой сервер.
+# Детерминированные отказы (tcp_fail — порт закрыт, yt_fail — узел режет YT) не ретраим.
+_TRANSIENT_REASONS = {"trace_http", "xray_error", "xray_start"}
+
+def deep_verify_with_retry(server):
+    res, reason = deep_verify(server)
+    if res is None and reason in _TRANSIENT_REASONS:
+        time.sleep(0.3)
+        res, reason = deep_verify(server)
+    return res, reason
 
 # --- ЭТАП 2: ФИНАЛЬНОЕ ПОСЛЕДОВАТЕЛЬНОЕ ТЕСТИРОВАНИЕ ТОП-10 ---
 def measure_node_stats_sequential(server, check_speed=True):
@@ -912,11 +1142,12 @@ def measure_node_stats_sequential(server, check_speed=True):
     
     try:
         proc = subprocess.Popen([XRAY_BIN, "-c", config_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(0.6) 
+        if not wait_xray_ready(local_port, XRAY_START_TIMEOUT):
+            loc_ok = False   # Xray не поднялся — узел уйдёт в отбраковку (9999)
         proxies = {"http": f"http://127.0.0.1:{local_port}", "https": f"http://127.0.0.1:{local_port}"}
 
         # Локация (определяем страну всегда — и для новых, и для старых серверов)
-        resp = requests.get("https://cloudflare.com/cdn-cgi/trace", proxies=proxies, timeout=REAL_TEST_TIMEOUT)
+        resp = SESSION.get("https://cloudflare.com/cdn-cgi/trace", proxies=proxies, timeout=REAL_TEST_TIMEOUT)
         if resp.status_code == 200:
             match = re.search(r'loc=([A-Z]{2})', resp.text)
             if match:
@@ -929,19 +1160,7 @@ def measure_node_stats_sequential(server, check_speed=True):
         # Для старых с актуальной скоростью (check_speed=False) пропускаем дорогой download —
         # скорость остаётся извлечённой из имени (экономия времени).
         if check_speed:
-            dl_start = time.perf_counter()
-            downloaded_bytes = 0
-            dl_resp = requests.get(
-                "https://speed.cloudflare.com/__down?bytes=5000000",
-                proxies=proxies, timeout=(2.0, SPEED_TEST_TIMEOUT), stream=True
-            )
-            if dl_resp.status_code == 200:
-                for chunk in dl_resp.iter_content(chunk_size=8192):
-                    if chunk: downloaded_bytes += len(chunk)
-                    if time.perf_counter() - dl_start > SPEED_TEST_TIMEOUT: break
-                duration = time.perf_counter() - dl_start
-                if duration > 0:
-                    new_speed = round((downloaded_bytes * 8 / 1_000_000) / duration, 2)
+            new_speed = measure_download_speed(proxies)
                 
     except Exception:
         pass 
@@ -951,6 +1170,7 @@ def measure_node_stats_sequential(server, check_speed=True):
             try: proc.wait(timeout=0.5)
             except: proc.kill()
         if os.path.exists(config_path): os.remove(config_path)
+        release_port(local_port)
 
     # Если Xray-туннель не прошёл (Cloudflare trace не вернул страну) — сервер нерабочий,
     # возвращаем real_delay=9999, чтобы его исключили на этапе сборки.
@@ -1014,15 +1234,18 @@ def main():
 
     # ИСПРАВЛЕНИЕ СКОРОСТИ: Загружаем все источники ПАРАЛЛЕЛЬНО
     logger.info("🌐 Загрузка источников (VLESS + VMess + Trojan)...")
+    source_urls = list(dict.fromkeys(SOURCES))   # дедуп URL самих источников, порядок сохранён
+    total_skipped = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_source, url) for url in SOURCES]
+        futures = [executor.submit(fetch_source, url) for url in source_urls]
         futures.append(executor.submit(search_github_configs))
-        
+
         for f in concurrent.futures.as_completed(futures):
-            links = f.result()
-            for link in links:
-                parsed = parse_link_into_server(link)
-                if parsed: all_configs.append(parsed)
+            servers, skipped = collect_parsed_servers(f.result())
+            all_configs.extend(servers)
+            total_skipped += skipped
+    if total_skipped:
+        logger.info(f"🧹 Пропущено пустых/невалидных ссылок из источников: {total_skipped}")
 
     # Загружаем серверы из локального файла my_source
     if os.path.exists(LOCAL_SOURCE_FILE):
@@ -1030,10 +1253,10 @@ def main():
         try:
             with open(LOCAL_SOURCE_FILE, "r", encoding="utf-8", errors="ignore") as lf:
                 local_links = extract_links(lf.read())
-                logger.info(f"📁 Найдено {len(local_links)} серверов в {LOCAL_SOURCE_FILE}")
-                for link in local_links:
-                    parsed = parse_link_into_server(link)
-                    if parsed: all_configs.append(parsed)
+                local_servers, local_skipped = collect_parsed_servers(local_links)
+                all_configs.extend(local_servers)
+                logger.info(f"📁 Найдено {len(local_servers)} серверов в {LOCAL_SOURCE_FILE}"
+                            + (f" (пропущено невалидных: {local_skipped})" if local_skipped else ""))
         except Exception as e:
             logger.error(f"❌ Ошибка чтения {LOCAL_SOURCE_FILE}: {e}")
 
@@ -1097,13 +1320,18 @@ def main():
             logger.info(f"⏭ Пропущено узлов неподдерживаемых протоколов: {len(to_speed_test) - len(filtered)}")
         to_speed_test = filtered
     tested_servers = []
-    fail_stats = {"tcp_fail": 0, "trace_http": 0, "yt_fail": 0, "xray_error": 0, "unknown": 0}
+    fail_stats = {"tcp_fail": 0, "trace_http": 0, "yt_fail": 0, "xray_error": 0, "xray_start": 0, "unknown": 0}
     logger.info(f"⚡ ЭТАП 1: Тестирование скорости (Xray). Workers: {MAX_WORKERS}... Кандидатов: {len(to_speed_test)}")
     t1_start = time.time()
+    stage1_deadline = t1_start + STAGE1_MAX_SECONDS
+    timed_out = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(deep_verify, s) for s in to_speed_test]
+        futures = [executor.submit(deep_verify_with_retry, s) for s in to_speed_test]
         done = 0
         for f in concurrent.futures.as_completed(futures):
+            if time.time() > stage1_deadline:
+                timed_out = True
+                break
             done += 1
             res, reason = f.result()
             if res:
@@ -1118,6 +1346,18 @@ def main():
                 logger.info(f"   ⏱ Прогресс STAGE 1: {done}/{len(to_speed_test)} (прошло {done - sum(fail_stats.values())}), "
                             f"{elapsed:.0f} сек, ~{rate:.1f} тестов/сек")
 
+        if timed_out:
+            # Лимит времени исчерпан: снимаем с очереди ещё не начатые тесты,
+            # запущенные — доделываем (при выходе из with они корректно завершатся).
+            cancelled = sum(1 for f in futures if f.cancel())
+            not_tested = max(0, len(to_speed_test) - done - cancelled)
+            logger.warning(
+                f"⏳ Лимит времени STAGE 1 ({STAGE1_MAX_SECONDS} сек) исчерпан: "
+                f"протестировано {done}, снято с очереди {cancelled}, "
+                f"не успело протестироваться ~{not_tested}. "
+                f"Увеличь V1A_STAGE1_MAX_SEC или V1A_WORKERS."
+            )
+
     # ВАЖНО: ВСЕ кандидаты тестируются (MAX_WORKERS параллельно), но в лог пишутся только
     # прошедшие. Итоговая статистика показывает реальную картину.
     slow = sum(1 for s in tested_servers if s['speed_mbps'] < SPEED_HARD_LIMIT)
@@ -1130,7 +1370,8 @@ def main():
         f"   Причины отсева: TCP-недоступен: {fail_stats.get('tcp_fail', 0)} | "
         f"Xray-туннель не работает: {fail_stats.get('xray_error', 0)} | "
         f"Cloudflare trace не ответил: {fail_stats.get('trace_http', 0)} | "
-        f"YouTube 204 не прошёл: {fail_stats.get('yt_fail', 0)}"
+        f"YouTube 204 не прошёл: {fail_stats.get('yt_fail', 0)} | "
+        f"Xray не стартовал: {fail_stats.get('xray_start', 0)}"
     )
 
     # Обновляем историю и собираем пул
@@ -1221,7 +1462,7 @@ def main():
                 client_num = (current_slot % len(urls_list)) + 1
                 logger.info(f"🔄 Ротация {node_info['name']}: выбран клиент {client_num} из {len(urls_list)}")
 
-            resp = requests.get(selected_url, timeout=10, verify=False)
+            resp = SESSION.get(selected_url, timeout=10, verify=False)
             if resp.status_code == 200:
                 links = extract_links(resp.text)
                 if links:

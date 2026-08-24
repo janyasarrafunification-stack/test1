@@ -7,6 +7,7 @@ import concurrent.futures
 import re
 import os
 import json
+import random
 import subprocess
 import tempfile
 import stat
@@ -146,8 +147,8 @@ JSON_FILE = 'stats.json'
 # Больше включённых протоколов = больше кандидатов и дольше тест.
 ENABLED_PROTOCOLS = {
     "vless",          # VLESS — по умолчанию
-    "vmess",        # VMess
-    "trojan",       # Trojan
+    # "vmess",        # VMess
+    # "trojan",       # Trojan
     "shadowsocks",  # Shadowsocks
     "hysteria2",    # Hysteria2 (требует Xray >= v25, см. выше)
 }
@@ -325,7 +326,9 @@ LOCAL_SOURCE_FILE = 'my_source'
 # Сколько Xray-тестов запускать параллельно.
 # GitHub runner (ubuntu-latest) = 4 CPU: больше 40 воркеров дают конкуренцию
 # и ложные отказы. Можно поднять через V1A_WORKERS на более мощном сервере.
-MAX_WORKERS = int(os.getenv("V1A_WORKERS", "40"))   # Параллельных Xray-тестов в STAGE 1
+MAX_WORKERS = int(os.getenv("V1A_WORKERS", "64"))   # Параллельных Xray-тестов в STAGE 1
+# 64 вместо 40: после фикса гонки портов и polling-готовности конкуренция
+# перестала ронять тесты, а xray в основном ждёт сеть, а не CPU.
 
 # --- СЕКРЕТНЫЙ КЛЮЧ ДЛЯ ШИФРОВАНИЯ ИСТОРИИ ---
 # Файл stats_history.json (история проверок) шифруется XOR + base64,
@@ -367,6 +370,10 @@ SPEED_HARD_LIMIT = 5.0      # Минимальная скорость для о�
 PING_ATTEMPTS = int(os.getenv("V1A_PING_ATTEMPTS", "2"))           # Попыток TCP-пинга на узел
 STAGE1_MAX_SECONDS = int(os.getenv("V1A_STAGE1_MAX_SEC", "1500"))  # Лимит времени STAGE 1 (сек)
 XRAY_START_TIMEOUT = 3.0                                           # Ожидание готовности порта Xray
+PING_WORKERS = int(os.getenv("V1A_PING_WORKERS", "400"))           # Потоков TCP-пинга (IO-bound, можно много)
+SOURCE_WAIT_SEC = int(os.getenv("V1A_SOURCE_WAIT", "40"))          # Лимит ожидания источников (сек)
+YT_CHECK_ENABLED = os.getenv("V1A_YT_CHECK", "1") == "1"           # Гейт YouTube generate_204
+STAGE1_MAX_CANDIDATES = int(os.getenv("V1A_STAGE1_MAX_CANDIDATES", "9000"))  # Потолок кандидатов STAGE 1
 
 # --- ИСТОЧНИКИ ДЛЯ ЗАМЕРА СКОРОСТИ ---
 # Основной — Cloudflare (anycast: отвечает почти из любой страны выхода туннеля).
@@ -883,7 +890,7 @@ def fetch_source(url):
     # Любая ошибка (HTTP != 200, таймаут, битый ответ) -> [] : скрипт не падает,
     # а просто пропускает источник.
     try:
-        resp = SESSION.get(url, timeout=(5, 20))
+        resp = SESSION.get(url, timeout=(3, 10))   # жёстче: битые хосты не должны висеть
         if resp.status_code == 200:
             links = extract_links(resp.text[:MAX_SOURCE_CHARS])
             logger.info(f"📥 Источник {url[:48]}... -> {len(links)} ссылок")
@@ -1084,12 +1091,15 @@ def deep_verify(server):
         else:
             return None, 'trace_http'
             
-        # YouTube 204 Test
-        yt_resp = SESSION.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=3.0)
-        if yt_resp.status_code == 204:
-            youtube_ok = True
+        # YouTube 204 Test (можно отключить V1A_YT_CHECK=0 — экономит ~1-2 с на тест)
+        if YT_CHECK_ENABLED:
+            yt_resp = SESSION.get("https://www.youtube.com/generate_204", proxies=proxies, timeout=3.0)
+            if yt_resp.status_code == 204:
+                youtube_ok = True
+            else:
+                return None, 'yt_fail'
         else:
-            return None, 'yt_fail'
+            youtube_ok = True
 
         # Speed Test (Cloudflare -> резервные источники при сбое)
         speed_mbps = measure_download_speed(proxies)
@@ -1236,14 +1246,26 @@ def main():
     logger.info("🌐 Загрузка источников (VLESS + VMess + Trojan)...")
     source_urls = list(dict.fromkeys(SOURCES))   # дедуп URL самих источников, порядок сохранён
     total_skipped = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_source, url) for url in source_urls]
-        futures.append(executor.submit(search_github_configs))
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+    futures = [executor.submit(fetch_source, url) for url in source_urls]
+    futures.append(executor.submit(search_github_configs))
 
-        for f in concurrent.futures.as_completed(futures):
+    # НЕ ждём медленные источники дольше SOURCE_WAIT_SEC: раньше один битый хост
+    # (ретраи 502) задерживал весь запуск почти на минуту.
+    done_set, not_done = concurrent.futures.wait(futures, timeout=SOURCE_WAIT_SEC)
+    for f in not_done:
+        f.cancel()
+    slow_sources = sum(1 for f in not_done if not f.cancel())
+    for f in concurrent.futures.as_completed(done_set):
+        try:
             servers, skipped = collect_parsed_servers(f.result())
             all_configs.extend(servers)
             total_skipped += skipped
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка обработки результата источника: {e}")
+    executor.shutdown(wait=False, cancel_futures=True)   # не блокируемся на отставших
+    if slow_sources:
+        logger.warning(f"⏳ Источников не дождались (> {SOURCE_WAIT_SEC} сек): {slow_sources}")
     if total_skipped:
         logger.info(f"🧹 Пропущено пустых/невалидных ссылок из источников: {total_skipped}")
 
@@ -1270,7 +1292,7 @@ def main():
     t_ping_start = time.time()
     logger.info(f"⚡ Пинг старых серверов ({len(prev_servers)})...")
     alive_prev = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=PING_WORKERS) as executor:
         futures = [executor.submit(ping_filter, s) for s in prev_servers]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
@@ -1301,7 +1323,7 @@ def main():
     t0_start = time.time()
     logger.info(f"⚡ ЭТАП 0: Дешёвый пинг-фильтр новых (TCP). Кандидатов: {len(fresh_candidates)} (уже в пуле, повторно не тестируем: {len(new_configs) - len(fresh_candidates)})...")
     alive_configs = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=150) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=PING_WORKERS) as executor:
         futures = [executor.submit(ping_filter, s) for s in fresh_candidates]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
@@ -1313,12 +1335,31 @@ def main():
     # ================== STAGE 1 ==================
     # Массовое тестирование скорости: НОВЫЕ живые + старые с просроченной скоростью
     to_speed_test = new_alive + prev_recheck
+    # Старые с просроченной скоростью — ПЕРВЫМИ: стабильность подписки важнее новинок
+    to_speed_test.sort(key=lambda s: 0 if s.get('from_prev') else 1)
     # Отбрасываем узлы протоколов, которых не умеет установленный Xray
     if unsupported:
         filtered = [s for s in to_speed_test if s['protocol'] not in unsupported]
         if len(filtered) != len(to_speed_test):
             logger.info(f"⏭ Пропущено узлов неподдерживаемых протоколов: {len(to_speed_test) - len(filtered)}")
         to_speed_test = filtered
+
+    # ПОТОЛОК КАНДИДАТОВ. При 30-минутном кроне бесконечный STAGE 1 всё равно
+    # будет убит следующим запуском (concurrency cancel-in-progress) — терялись
+    # ВСЕ результаты. Лучше целиком протестировать приоритетных и отложить хвост:
+    # отложенные новые никуда не деваются — придут с теми же источников в след. прогон.
+    if len(to_speed_test) > STAGE1_MAX_CANDIDATES:
+        n_old = min(len(prev_recheck), STAGE1_MAX_CANDIDATES)
+        head = to_speed_test[:n_old]                       # старые — всегда тестируем
+        tail = to_speed_test[n_old:]                       # только новые
+        random.shuffle(tail)                               # равномерно по всем источникам
+        kept_tail = tail[:STAGE1_MAX_CANDIDATES - n_old]
+        deferred_n = len(tail) - len(kept_tail)
+        to_speed_test = head + kept_tail
+        logger.info(
+            f"⚖️ Кандидатов больше лимита {STAGE1_MAX_CANDIDATES}: "
+            f"отложено новых на следующий запуск: {deferred_n}"
+        )
     tested_servers = []
     fail_stats = {"tcp_fail": 0, "trace_http": 0, "yt_fail": 0, "xray_error": 0, "xray_start": 0, "unknown": 0}
     logger.info(f"⚡ ЭТАП 1: Тестирование скорости (Xray). Workers: {MAX_WORKERS}... Кандидатов: {len(to_speed_test)}")

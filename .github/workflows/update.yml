@@ -10,9 +10,17 @@ permissions:
   contents: write
   actions: write
 
+# Не даём двум прогонам работать одновременно: перекрывающиеся запуски
+# конфликтовали при git push и дважды тестировали одних и тех же узлов.
+concurrency:
+  group: update-vpn-subscription
+  cancel-in-progress: true
+
 jobs:
   update-vpn:
     runs-on: ubuntu-latest
+    # Страховка от зависшего прогона (дефолт GitHub — 360 минут)
+    timeout-minutes: 50
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
@@ -28,8 +36,9 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests geoip2 aiohttp aiohttp-socks PySocks urllib3 maxminddb
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Единственный источник правды по зависимостям — requirements.txt
+          # (раньше пакеты ставились дважды: явным списком и из файла)
+          pip install -r requirements.txt
 
       - name: ⚙️ Setup Xray Core (последняя версия)
         run: |
@@ -62,26 +71,30 @@ jobs:
           git rm --cached FL1PVPN 2>/dev/null || true
           rm -f FL1PVPN 2>/dev/null || true
 
-          # Сохраняем файл подписки И историю проверок (для логики 24ч перепроверки скорости)
+          # Сохраняем файл подписки И историю проверок (нужна для перепроверки скорости раз в 8ч)
           git add subscription stats_history.json
 
-          # stats.json временно отключён (будущая реализация) — счётчик не считаем
-          # COUNT=$(python3 -c "import json; print(len(json.load(open('stats.json'))['servers']))" 2>/dev/null || echo "0")
+          if git diff --cached --quiet; then
+            echo "ℹ️ Изменений нет — коммит не нужен"
+          else
+            git commit -m "🚀 Update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          fi
 
-          git commit -m "🚀 Update: $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "Нет изменений"
-          git stash --include-untracked
-          git pull --rebase origin main || git pull --rebase origin master || true
+          # РАНЬШЕ: `git stash --include-untracked` перед pull НАВСЕГДА выбрасывал
+          # незакоммиченные файлы (stash создавался и никогда не возвращался).
+          # Теперь --autostash: спрятать перед rebase и ВЕРНУТЬ после него.
+          BRANCH="$(git branch --show-current)"
+          git pull --rebase --autostash origin "$BRANCH"
           git push origin HEAD
           echo "✅ Файл subscription успешно обновлен!"
 
-      # ─── АВТОМАТИЧЕСКАЯ ОЧИСТКА ИСТОРИИ WORKFLOW ───
-      # Исправленная версия: через REST API + jq, без подавления ошибок.
-      # Удаляет ВСЕ запуски, кроме текущего.
+      # ─── ОЧИСТКА ИСТОРИИ WORKFLOW ───
+      # По решению владельца: удаляются ВСЕ прошлые запуски, кроме текущего.
+      # Это НАМЕРЕННО (не баг) — не заменять на «хранить N последних».
       - name: 🧹 Clean old workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Очистка старых запусков Workflow..."
           CURRENT="${{ github.run_id }}"
           RESP=$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \

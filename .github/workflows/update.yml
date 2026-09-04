@@ -2,109 +2,151 @@ name: Auto Update VPN Subscription
 
 on:
   schedule:
-    # Каждые 30 минут, в UTC (GitHub использует UTC, не локальное время)
-    - cron: '7,37 * * * *'
+    # Раз в час (не в :00 — там очередь). GitHub может задержать старт на 5–20 мин,
+    # поэтому окно в 30 мин при cancel-in-progress регулярно теряло прогоны целиком.
+    - cron: '7 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   actions: write
 
-# Не даём двум прогонам работать одновременно: перекрывающиеся запуски
-# конфликтовали при git push и дважды тестировали одних и тех же узлов.
+# НЕ отменяем работающий прогон: лишний пусть подождёт в очереди
+# (GitHub держит там максимум один, остальные отбрасывает сам).
 concurrency:
   group: update-vpn-subscription
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+env:
+  DATA_BRANCH: data          # ветка-хранилище subscription + stats_history.json
+  MIN_NODES: 50              # sanity-check: не публиковать подписку, если узлов меньше
+  MIN_RATIO_PCT: 30          # ...или меньше 30% от прошлого размера файла
 
 jobs:
   update-vpn:
     runs-on: ubuntu-latest
-    # Страховка от зависшего прогона (дефолт GitHub — 360 минут)
-    timeout-minutes: 50
+    # Реальный предохранитель: скрипт сам укладывается в RUN_BUDGET_SEC (25 мин),
+    # + установка + коммит. Должно быть МЕНЬШЕ интервала крона.
+    timeout-minutes: 45
     steps:
-      - name: 📥 Checkout repository
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: 🐍 Set up Python 3.10
+      # Данные лежат в отдельной orphan-ветке: один коммит, force-push, история не растёт.
+      # Первый запуск (ветки ещё нет) — просто стартуем с пустого состояния.
+      - name: 📂 Fetch previous data
+        run: |
+          set -euo pipefail
+          if git fetch --depth=1 origin "$DATA_BRANCH" 2>/dev/null; then
+            git checkout FETCH_HEAD -- subscription stats_history.json 2>/dev/null || true
+            git reset -q -- subscription stats_history.json 2>/dev/null || true
+            echo "✅ Загружены прошлые subscription/stats_history.json из ветки $DATA_BRANCH"
+          else
+            echo "ℹ️ Ветки $DATA_BRANCH ещё нет — холодный старт"
+          fi
+          cp subscription subscription.prev 2>/dev/null || true
+
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
           cache: 'pip'
 
       - name: 📦 Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # Единственный источник правды по зависимостям — requirements.txt
-          # (раньше пакеты ставились дважды: явным списком и из файла)
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: ⚙️ Setup Xray Core (последняя версия)
+      - name: 🔎 Resolve Xray version
+        id: xray
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Всегда берём ПОСЛЕДНЮЮ версию Xray: hysteria2 поддерживается только в v25+,
-          # а старый бинарник из репозитория мог устареть.
-          LATEST="$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)"
-          CURRENT="$(./xray version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)"
-          if [ ! -x ./xray ] || [ "${CURRENT}" != "${LATEST#v}" ]; then
-            echo "⬇️ Обновляю Xray: ${CURRENT:-нет} -> ${LATEST}"
-            curl -sL "https://github.com/XTLS/Xray-core/releases/download/${LATEST}/Xray-linux-64.zip" -o xray.zip
-            unzip -o xray.zip xray geoip.dat geosite.dat 2>/dev/null || true
-            rm -f xray.zip
+          set -euo pipefail
+          # Зафиксируй версию через repo variable V1A_XRAY_VERSION, когда найдёшь ту,
+          # что точно работает с hysteria2 — latest иногда ломает схему конфига.
+          PINNED="${{ vars.V1A_XRAY_VERSION }}"
+          if [ -n "$PINNED" ]; then
+            VER="${PINNED#v}"
           else
-            echo "✅ Xray уже актуален: ${CURRENT}"
+            VER="$(gh api repos/XTLS/Xray-core/releases/latest --jq .tag_name)"
+            VER="${VER#v}"
           fi
+          [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "❌ Не удалось определить версию Xray: '$VER'"; exit 1; }
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Xray version: $VER"
+
+      - name: 💾 Cache Xray binary
+        id: cache-xray
+        uses: actions/cache@v4
+        with:
+          path: xray
+          key: xray-linux-64-${{ steps.xray.outputs.version }}
+
+      - name: ⚙️ Download Xray Core
+        if: steps.cache-xray.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          VER="${{ steps.xray.outputs.version }}"
+          curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/v${VER}/Xray-linux-64.zip" -o xray.zip
+          unzip -o -q xray.zip xray
+          rm -f xray.zip
           chmod +x ./xray
+          ./xray version | head -n1
 
       - name: 🚀 Run VPN Scanner
-        run: python main.py
-
-      - name: 📤 Commit ONLY subscription
+        env:
+          TOKEN: ${{ github.token }}                       # раньше не передавался -> GitHub Search всегда в rate-limit
+          V1A_XRAY_VERSION: ${{ steps.xray.outputs.version }}  # скрипт не дёргает API и не удалит рабочий бинарник
+          V1A_RUN_BUDGET_SEC: '1500'
+          PYTHONUNBUFFERED: '1'
         run: |
+          chmod +x ./xray
+          python main.py
+
+      - name: 🛡 Sanity check result
+        run: |
+          set -euo pipefail
+          [ -s subscription ] || { echo "❌ subscription пустой — не публикуем"; exit 1; }
+          NEW=$(stat -c%s subscription)
+          if [ -s subscription.prev ]; then
+            OLD=$(stat -c%s subscription.prev)
+            if [ "$NEW" -lt $(( OLD * MIN_RATIO_PCT / 100 )) ]; then
+              echo "❌ Подписка сжалась с ${OLD} до ${NEW} байт (< ${MIN_RATIO_PCT}%) — похоже на сбой сети, не публикуем"
+              exit 1
+            fi
+          fi
+          # ~400 байт на узел после обфускации — грубая оценка количества
+          [ "$NEW" -gt $(( MIN_NODES * 400 )) ] || { echo "❌ Слишком маленький файл (${NEW} байт)"; exit 1; }
+          echo "✅ subscription: ${NEW} байт"
+
+      - name: 📤 Publish to data branch
+        run: |
+          set -euo pipefail
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Очищаем временные файлы
-          rm -f last_update.txt vpn_scanner.log logs/*.log 2>/dev/null || true
-
-          # Удаляем старый файл подписки, если он ещё остался (переименование)
-          git rm --cached FL1PVPN 2>/dev/null || true
-          rm -f FL1PVPN 2>/dev/null || true
-
-          # Сохраняем файл подписки И историю проверок (нужна для перепроверки скорости раз в 8ч)
+          # Изолированный worktree с orphan-веткой: один коммит, без истории, без конфликтов с кодом.
+          rm -rf /tmp/data && mkdir -p /tmp/data
+          cp subscription stats_history.json /tmp/data/
+          cd /tmp/data
+          git init -q -b "$DATA_BRANCH"
           git add subscription stats_history.json
-
-          if git diff --cached --quiet; then
-            echo "ℹ️ Изменений нет — коммит не нужен"
-          else
-            git commit -m "🚀 Update: $(date -u +'%Y-%m-%d %H:%M UTC')"
-          fi
-
-          # РАНЬШЕ: `git stash --include-untracked` перед pull НАВСЕГДА выбрасывал
-          # незакоммиченные файлы (stash создавался и никогда не возвращался).
-          # Теперь --autostash: спрятать перед rebase и ВЕРНУТЬ после него.
-          BRANCH="$(git branch --show-current)"
-          git pull --rebase --autostash origin "$BRANCH"
-          git push origin HEAD
-          echo "✅ Файл subscription успешно обновлен!"
+          git commit -q -m "🚀 Update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$DATA_BRANCH"
+          echo "✅ Опубликовано: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DATA_BRANCH}/subscription"
 
       # ─── ОЧИСТКА ИСТОРИИ WORKFLOW ───
-      # По решению владельца: удаляются ВСЕ прошлые запуски, кроме текущего.
-      # Это НАМЕРЕННО (не баг) — не заменять на «хранить N последних».
+      # По решению владельца удаляются ВСЕ прошлые УСПЕШНЫЕ запуски (не «N последних»).
+      # Упавшие остаются — иначе невозможно понять, почему ночью что-то сломалось.
       - name: 🧹 Clean old workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          CURRENT="${{ github.run_id }}"
-          RESP=$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/update.yml/runs?per_page=100")
-          # Получаем ID всех запусков, кроме текущего
-          echo "$RESP" | jq -r --argjson cur "$CURRENT" '.workflow_runs[] | select(.id != $cur) | .id' | while read -r rid; do
-            echo "Удаляю запуск #$rid ..."
-            curl -s -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${rid}"
-            echo
-          done
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/${{ github.workflow_ref && 'update.yml' }}/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.id != ${{ github.run_id }} and .status == "completed" and .conclusion == "success") | .id' \
+          | while read -r rid; do
+              echo "Удаляю запуск #$rid"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${rid}" >/dev/null || true
+            done
           echo "✅ Готово."

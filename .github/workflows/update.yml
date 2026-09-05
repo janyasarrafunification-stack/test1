@@ -108,18 +108,19 @@ jobs:
         run: |
           set -euo pipefail
           [ -s subscription ] || { echo "❌ subscription пустой — не публикуем"; exit 1; }
-          NEW=$(stat -c%s subscription)
-          if [ -s subscription.prev ]; then
-            OLD=$(stat -c%s subscription.prev)
-            if [ "$NEW" -lt $(( OLD * MIN_RATIO_PCT / 100 )) ]; then
-              echo "❌ Подписка сжалась с ${OLD} до ${NEW} байт (< ${MIN_RATIO_PCT}%) — похоже на сбой сети, не публикуем"
-              exit 1
-            fi
+          [ -s run_meta.json ] || { echo "❌ run_meta.json не создан — скрипт не дошёл до записи"; exit 1; }
+          NODES=$(jq -r '.nodes // 0' run_meta.json)
+          PREV=$(jq -r '.prev_nodes // 0' run_meta.json)
+          SIZE=$(stat -c%s subscription)
+          echo "Узлов: ${NODES} (в прошлой подписке: ${PREV}), файл ${SIZE} байт"
+          if [ "$NODES" -lt "$MIN_NODES" ]; then
+            echo "❌ Узлов меньше ${MIN_NODES} — не публикуем"; exit 1
           fi
-          # ~400 байт на узел после обфускации — грубая оценка количества
-          [ "$NEW" -gt $(( MIN_NODES * 400 )) ] || { echo "❌ Слишком маленький файл (${NEW} байт)"; exit 1; }
-          echo "✅ subscription: ${NEW} байт"
-
+          if [ "$PREV" -gt 0 ] && [ "$NODES" -lt $(( PREV * MIN_RATIO_PCT / 100 )) ]; then
+            echo "❌ Узлов ${NODES} < ${MIN_RATIO_PCT}% от прошлых ${PREV} — похоже на сбой, не публикуем"; exit 1
+          fi
+          echo "✅ subscription: ${NODES} узлов, ${SIZE} байт"
+          
       - name: 📤 Publish to data branch
         run: |
           set -euo pipefail

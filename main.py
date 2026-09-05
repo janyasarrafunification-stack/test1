@@ -4,6 +4,7 @@ import base64
 import socket
 import time
 import concurrent.futures
+import collections
 import re
 import os
 import json
@@ -65,12 +66,12 @@ logger.addHandler(_h)
 # ─────────────────────────────────────────────────────────────────────────────
 GITHUB_TOKEN = os.getenv("TOKEN", "")
 
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  ВСТАВЬ СЮДА СВОЙ АКТУАЛЬНЫЙ СПИСОК (74 URL). Ниже — старый из 17 ссылок. ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 # Ссылки вида github.com/<owner>/<repo>/blob/<branch>/<file> можно вставлять как есть:
-# normalize_source_url() сам переведёт их в raw.githubusercontent.com. Blob-страница —
-# это HTML с обрезанным содержимым (большие файлы GitHub не показывает целиком),
-# поэтому напрямую из неё ссылки приезжают неполными и частично битыми.
+# normalize_source_url() сам переведёт их в raw.githubusercontent.com.
 SOURCES = [
-    # --- Базовые источники ---
     "https://raw.githubusercontent.com/willafrid/skorodum.vpn/main/cron-base64/combined.txt",
     "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/main/kizyakbeta6BL.txt",
     "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/main/kizyakbeta6.txt",
@@ -88,69 +89,6 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
     "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
-
-    # --- Новые источники: raw-подписки И обычные txt (истоники.txt) ---
-    # GitHub blob-ссылки нормализованы в raw; корни репо без пути к файлу отброшены.
-    # Пустые/битые строки и дубликаты НЕ страшны: их отбрасывают extract_links
-    # и collect_parsed_servers — скрипт не падает на мусорном источнике.
-    "https://raw.githubusercontent.com/FLEXIY0/matryoshka-vpn/main/configs/russia_whitelist.txt",
-    "https://raw.githubusercontent.com/LimeHi/LimeVPN/main/whitelist.txt",
-    "https://raw.githubusercontent.com/dgshsh031-code/free-vpn-sub/main/sub.txt",
-    "https://raw.githubusercontent.com/vit352018/Claude-VPN-Parcer/main/output/WIFI_BL.txt",
-    "https://raw.githubusercontent.com/vit352018/Claude-VPN-Parcer/main/output/MOB_WL.txt",
-    "https://raw.githubusercontent.com/aviamastersgh/vpn-free-russia/main/ru_configs.txt",
-    "https://raw.githubusercontent.com/aviamastersgh/vpn-free-russia/main/verified_configs.txt",
-    "https://raw.githubusercontent.com/TonyPro13/vpn-subscription/main/output/subscription.txt",
-    "https://raw.githubusercontent.com/MELVPNBOT/BrawlVPN/main/alive.txt",
-    "https://raw.githubusercontent.com/sepeli88/My-sub/main/subscription.txt",
-    "https://raw.githubusercontent.com/flaafix/AetrisVPN/main/AetrisVPN.txt",
-    "https://raw.githubusercontent.com/ali13788731/vpn/main/sub_raw.txt",
-    "https://raw.githubusercontent.com/SoliSpirit/SolVPN/main/Subscribes/sub1.txt",
-    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/16.txt",
-    "https://raw.githubusercontent.com/hiztin/VLESS-PO-GRIBI/main/deploy/subscriptions/1.txt",
-    "https://raw.githubusercontent.com/hiztin/VLESS-PO-GRIBI/main/deploy/subscriptions/11.txt",
-    "https://raw.githubusercontent.com/whoahaow/rjsxrd/main/githubmirror/bypass/bypass-all.txt",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
-    "https://raw.githubusercontent.com/yitong2333/proxy-minging/main/v2ray.txt",
-    "https://raw.githubusercontent.com/Hidashimora/free-vpn-anti-rkn/main/configs/1.2.txt",
-    "https://raw.githubusercontent.com/miladtahanian/V2RayCFGDumper/main/sub.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
-    "https://raw.githubusercontent.com/CidVpn/cid-vpn-config/main/general.txt",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
-    "https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/mixed_iran.txt",
-    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/26.txt",
-    "https://raw.githubusercontent.com/R3ZARAHIMI/tg-v2ray-configs-every2h/main/conf-week.txt",
-    "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Sub1.txt",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Sub2.txt",
-    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector_Py/main/sub/Mix/mix.txt",
-    "https://raw.githubusercontent.com/FSystem88/vless-keys/main/keys.txt",
-    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector/main/sub/mix",
-    "https://raw.githubusercontent.com/wuqb2i4f/xray-config-toolkit/main/output/base64/mix-uri",
-    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/23.txt",
-    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vless.txt",
-    "https://raw.githubusercontent.com/ksenkovsolo/HardVPN-bypass-WhiteLists-/main/vpn-lte/WHITELIST-ALL.txt",
-    "https://raw.githubusercontent.com/prominbro/sub/main/212.txt",
-    "https://gist.githubusercontent.com/LIKE-FURRY/ea91d3f11eb50e849c6007754417dc59/raw/d40546055dd1b382d3a2e4f6f810b68d9406cacf/GothicVPNFree-iz-githab",
-    "https://raw.githubusercontent.com/xolirx/list-check/main/subs/6788436831_lte.txt?v=1786267086",
-    "https://raw.githubusercontent.com/xolirx/list-check/main/subs/6788436831_black.txt?v=1786267051",
-    "https://gist.githubusercontent.com/sori99346-cyber/bd11c98ceecbee68bf8aa7452a10068a/raw/49bcade516dc30646fca8eb12e902493920114c9/vpn.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/683e002b7255b1da0c9c5204272bfeab/raw/9ad935bd17429ed21a020f40d5180a23bc5f45c2/vpn.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/ed70bd2f52b04ce73a578f6ed90f7952/raw/9edc274426f05c534f2f1b553989fbb4d862f88c/happ.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/ddb62003fb73adc734c772aa1d9588e6/raw/2c96bdd9077b8bd48c8006af3ec328994709d9a9/happ.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/81672bad6e3fcf8f4ba7dc5c94dd5d2d/raw/de8193dafbbd016b7d96222d77764592ec532570/@ConfigiHapp.txt",
-    "https://gist.githubusercontent.com/Semenhach1/49b3bdf4e07c64d28b7c79ee185ecb3b/raw/r_8742354695.txt",
-    "https://gist.githubusercontent.com/LIKE-FURRY/af64b3ca475a5a66f0a47c1e07038fd5/raw/@FURRY_VPN_FREE-PREMIUM-CLUCHI-FILTR-IZ-GITHAB",
-    "https://raw.githubusercontent.com/LimeHi/LimeVPN/main/blacklist.txt",
-    "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/BLACK_FULL.txt",
-    "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/WHITE_FULL.txt",
-    "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub.txt",
-    "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
-    "https://raw.githubusercontent.com/vveg26/v2ray/main/Sub",
-    "https://raw.githubusercontent.com/v2ray-mobi/v2ray-configs/main/sub",
-    "https://raw.githubusercontent.com/yuandj/sing-box/main/sub",
-    "https://raw.githubusercontent.com/jackmo-ai/v2ray-configs/main/sub",
-    
 ]
 
 XRAY_BIN = "./xray"
@@ -181,17 +119,11 @@ _LEGACY_SHIFT = 7
 PUBLISH_TARGET = None
 
 # РЕЖИМ 2 (будущее): отдельный аккаунт/репозиторий только для готового файла.
-# Чтобы включить: закомментируй строку выше, раскомментируй блок ниже,
-# и добавь в Secrets тестового репо секрет V1A_PUBLISH_TOKEN — fine-grained PAT
-# от ДРУГОГО аккаунта с правом Contents: Read and write на ОДИН репо публикации.
-# Локальный OUTPUT_FILE продолжает писаться (он нужен как состояние для
-# следующего прогона), но клиентам отдаётся файл из репо публикации:
-#   https://raw.githubusercontent.com/<repo>/<branch>/<path>
 # PUBLISH_TARGET = {
-#     "repo":      "other-account/vpn-public",   # владелец/репозиторий публикации
+#     "repo":      "other-account/vpn-public",
 #     "branch":    "main",
-#     "path":      "subscription",               # путь к файлу внутри репо
-#     "token_env": "V1A_PUBLISH_TOKEN",          # имя переменной окружения с токеном
+#     "path":      "subscription",
+#     "token_env": "V1A_PUBLISH_TOKEN",
 # }
 
 ENABLED_PROTOCOLS = {
@@ -207,17 +139,22 @@ LINK_PROTO_NAMES = {
     "ss": "shadowsocks", "hysteria2": "hysteria2", "hy2": "hysteria2",
 }
 
+# Шифры Shadowsocks, которые умеет Xray. Остальные (rc4-md5, aes-*-cfb, chacha20 без
+# poly1305 и т. п.) Xray отвергает на старте — отсекаем на парсинге, а не Xray-тестом.
+SS_SUPPORTED_METHODS = {
+    "aes-128-gcm", "aes-256-gcm", "chacha20-poly1305", "chacha20-ietf-poly1305",
+    "xchacha20-poly1305", "xchacha20-ietf-poly1305", "none", "plain",
+    "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305",
+}
+
 # Hysteria2 с insecure=1 (самоподписанный сертификат) невозможно проверить в
-# Xray >= v25 без pinnedPeerCertSha256 — такие ссылки пропускаем сразу,
-# чтобы не тратить Xray-тест на гарантированный отказ.
+# Xray >= v25 без pinnedPeerCertSha256 — такие ссылки пропускаем сразу.
 HY2_SKIP_INSECURE = os.getenv("V1A_HY2_SKIP_INSECURE", "1") == "1"
 
 # --- Параллельность ---
 MAX_WORKERS = int(os.getenv("V1A_WORKERS", "64"))              # Xray-тестов в STAGE 1
 STAGE2_WORKERS = int(os.getenv("V1A_STAGE2_WORKERS", "48"))    # Xray-тестов в STAGE 2
 PING_WORKERS = int(os.getenv("V1A_PING_WORKERS", "400"))       # TCP-пинг (IO-bound)
-# Одновременных закачек 5 МБ. Канал раннера делится между ними: чем больше,
-# тем сильнее занижается скорость и тем больше ложных отказов по порогу.
 SPEED_CONCURRENCY = int(os.getenv("V1A_SPEED_CONCURRENCY", "6"))
 _speed_semaphore = threading.BoundedSemaphore(SPEED_CONCURRENCY)
 
@@ -231,7 +168,6 @@ SOURCE_WAIT_SEC = int(os.getenv("V1A_SOURCE_WAIT", "40"))
 YT_CHECK_ENABLED = os.getenv("V1A_YT_CHECK", "1") == "1"
 
 # --- Бюджет времени всего прогона ---
-# STAGE 1 автоматически ужимается так, чтобы осталось STAGE2_RESERVE_SEC.
 RUN_BUDGET_SEC = int(os.getenv("V1A_RUN_BUDGET_SEC", "1500"))       # 25 мин
 STAGE1_MAX_SECONDS = int(os.getenv("V1A_STAGE1_MAX_SEC", "1000"))
 STAGE2_RESERVE_SEC = int(os.getenv("V1A_STAGE2_RESERVE_SEC", "300"))
@@ -241,11 +177,8 @@ STAGE1_MAX_CANDIDATES = int(os.getenv("V1A_STAGE1_MAX_CANDIDATES", "9000"))
 SPEED_HARD_LIMIT = 5.0                       # Mbps
 MAX_SUBSCRIPTION_SERVERS = 1200
 SPEED_CHECK_INTERVAL = 8 * 3600              # скорость старых — раз в 8 часов
-# Грейс: старый узел выкидывается только после GRACE_MISSES+1 неудач ПОДРЯД.
 GRACE_MISSES = int(os.getenv("V1A_GRACE_MISSES", "2"))
 HISTORY_TTL_DAYS = int(os.getenv("V1A_HISTORY_TTL_DAYS", "14"))
-# Предохранитель: если узлов получилось меньше N% от прошлой подписки — это сбой
-# (сеть, Xray, проверка протоколов), файлы состояния НЕ перезаписываем.
 MIN_RESULT_RATIO_PCT = int(os.getenv("V1A_MIN_RATIO_PCT", "30"))
 
 SPEED_TEST_URLS = [
@@ -269,15 +202,6 @@ except Exception as e:
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔐 ЗАЩИТА ФАЙЛОВ
 # ─────────────────────────────────────────────────────────────────────────────
-# Схема (без криптобиблиотек — только sha256/hmac/zlib/XOR):
-#   key32 = SHA256(секрет)
-#   nonce = 12 случайных байт                      -> каждый файл уникален
-#   data  = zlib(plaintext)                        -> в 5-8 раз меньше, структура скрыта
-#   ks[i] = SHA256(key32 ‖ nonce ‖ counter_i)      -> поток ключа
-#   ct    = data XOR ks
-#   tag   = HMAC-SHA256(key32, nonce ‖ ct)[:16]    -> проверка ключа и целостности
-#   файл  = "V1A2." + base64url(nonce ‖ tag ‖ ct)
-# С неверным ключом клиент получает внятную ошибку, а не мусор.
 def _keystream(key32: bytes, nonce: bytes, length: int) -> bytes:
     out = bytearray()
     i = 0
@@ -288,7 +212,6 @@ def _keystream(key32: bytes, nonce: bytes, length: int) -> bytes:
 
 
 def _xor(a: bytes, b: bytes) -> bytes:
-    # через int — на порядки быстрее побайтового цикла на мегабайтных файлах
     if not a:
         return b""
     return (int.from_bytes(a, "big") ^ int.from_bytes(b, "big")).to_bytes(len(a), "big")
@@ -331,7 +254,6 @@ def _legacy_decrypt_history(token: str):
 
 
 def open_subscription_text(token: str) -> str:
-    """Новый формат -> старый формат -> как есть (ручная правка)."""
     token = token.strip()
     if token.startswith(SEAL_MAGIC):
         return unseal(token, SUB_KEY)
@@ -369,8 +291,6 @@ def save_history(history):
 # 📤 ПУБЛИКАЦИЯ
 # ─────────────────────────────────────────────────────────────────────────────
 def publish_remote(content_text: str) -> bool:
-    """Загружает готовый файл в другой репозиторий через GitHub Contents API.
-    Работает через токен другого аккаунта — тестовый репо и репо публикации не связаны."""
     tgt = PUBLISH_TARGET
     token = os.getenv(tgt.get("token_env", "V1A_PUBLISH_TOKEN"), "")
     if not token:
@@ -402,7 +322,7 @@ def publish_remote(content_text: str) -> bool:
             if r.status_code in (200, 201):
                 logger.info(f"📤 Опубликовано: https://raw.githubusercontent.com/{repo}/{branch}/{path}")
                 return True
-            if r.status_code == 409:          # sha устарел (параллельный коммит) — повтор
+            if r.status_code == 409:
                 time.sleep(2 * attempt)
                 continue
             logger.error(f"❌ Публикация: PUT {r.status_code} {r.text[:300]}")
@@ -414,8 +334,6 @@ def publish_remote(content_text: str) -> bool:
 
 
 def publish_subscription(sealed_text: str):
-    # Локальная копия пишется ВСЕГДА: это состояние «старых» узлов для следующего прогона
-    # (и публикуемый файл в режиме одного репозитория).
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(sealed_text)
     if PUBLISH_TARGET:
@@ -426,8 +344,6 @@ def publish_subscription(sealed_text: str):
 
 
 def write_meta(nodes: int, prev_nodes: int, size_bytes: int):
-    """Метаданные прогона для sanity-check в воркфлоу (размер файла в байтах
-    сравнивать нельзя: сжатый V1A2-формат в разы меньше старого)."""
     try:
         with open(META_FILE, "w", encoding="utf-8") as f:
             json.dump({"nodes": nodes, "prev_nodes": prev_nodes, "bytes": size_bytes,
@@ -457,7 +373,6 @@ def hist_entry(history, node_id):
 
 
 def mark_success(history, server, speed_checked):
-    """Узел жив. speed_checked=True — скорость измерена в этом прогоне."""
     e = hist_entry(history, node_id_of(server))
     e["misses"] = 0
     e["last_seen"] = int(time.time())
@@ -473,7 +388,6 @@ def mark_success(history, server, speed_checked):
 
 
 def mark_failure(history, server):
-    """Узел не прошёл проверку. True — ещё в грейс-периоде."""
     e = hist_entry(history, node_id_of(server))
     e["misses"] += 1
     e["failures"] += 1
@@ -484,7 +398,7 @@ def mark_failure(history, server):
 def _last_seen_ts(v):
     if isinstance(v, (int, float)):
         return float(v)
-    try:  # старый формат "YYYY-MM-DD"
+    try:
         return datetime.strptime(str(v), "%Y-%m-%d").timestamp()
     except Exception:
         return time.time()
@@ -528,25 +442,51 @@ def _base_server(proto, host, port, uuid, original, **kw):
     return d
 
 
-def _split_hostport(hp):
-    host, port = hp.rsplit(":", 1)
-    return host.replace("[", "").replace("]", ""), int(port)
+def _split_hostport(hp, default_port=None):
+    """host:port | host:port/путь | [ipv6]:port | host (-> default_port) | port-диапазон 443-8443."""
+    hp = hp.strip().split('/', 1)[0]
+    if hp.startswith('['):                       # IPv6 в скобках
+        host, _, rest = hp[1:].partition(']')
+        port = rest.lstrip(':')
+    else:
+        host, sep, port = hp.rpartition(':')
+        if not sep:
+            host, port = hp, ''
+    port = re.split(r'[-,]', port, 1)[0].strip()   # hy2 port hopping: берём первый порт
+    if not port:
+        if default_port is None:
+            raise ValueError("no port")
+        port = default_port
+    port = int(port)
+    if not host or not (0 < port < 65536):
+        raise ValueError("bad host/port")
+    return host, port
+
+
+def _norm_security(sec):
+    sec = (sec or 'none').lower()
+    if sec in ('none', 'tls', 'reality'):
+        return sec
+    return 'tls' if sec == 'xtls' else 'none'
 
 
 def parse_vless(config_str):
     try:
         full = config_str.strip()
-        body = full.split('#', 1)[0]          # фрагмент отрезаем ДО разбора порта
-        uuid_val = body.split("@", 1)[0][8:]
-        rest = body.split("@", 1)[1]
+        body = full.split('#', 1)[0].split('://', 1)[1]
+        userinfo, sep, rest = body.rpartition('@')
+        if not sep or not userinfo or not rest:
+            return None
         hp, _, query = rest.partition("?")
-        host, port = _split_hostport(hp)
+        host, port = _split_hostport(hp, default_port=443)
         p = parse_qs(query) if query else {}
         g = lambda k, d='': p.get(k, [d])[0]
-        conf = _base_server("vless", host, port, uuid_val, full,
-                            type=g('type', 'tcp'), security=g('security', 'none'), flow=g('flow'),
+        sec = _norm_security(g('security', 'none'))
+        flow = g('flow') if sec in ('tls', 'reality') else ''      # flow без TLS Xray не запустит
+        conf = _base_server("vless", host, port, unquote(userinfo), full,
+                            type=g('type', 'tcp') or 'tcp', security=sec, flow=flow,
                             sni=g('sni'), pbk=g('pbk'), sid=g('sid'), spx=g('spx', '/'), path=g('path', '/'),
-                            host=g('host'), fp=g('fp', 'chrome'), serviceName=g('serviceName'),
+                            host=g('host'), fp=g('fp', 'chrome') or 'chrome', serviceName=g('serviceName'),
                             mode=g('mode'), authority=g('authority'), extra=g('extra'))
         if conf['security'] == 'reality' and not conf['pbk']:
             return None
@@ -558,16 +498,17 @@ def parse_vless(config_str):
 def parse_trojan(config_str):
     try:
         full = config_str.strip()
-        body = full.split('#', 1)[0]
-        password = body.split("@", 1)[0][9:]
-        rest = body.split("@", 1)[1]
+        body = full.split('#', 1)[0].split('://', 1)[1]
+        password, sep, rest = body.rpartition('@')
+        if not sep or not password or not rest:
+            return None
         hp, _, query = rest.partition("?")
-        host, port = _split_hostport(hp)
+        host, port = _split_hostport(hp, default_port=443)
         p = parse_qs(query) if query else {}
         g = lambda k, d='': p.get(k, [d])[0]
-        return _base_server("trojan", host, port, password, full,
-                            type=g('type', 'tcp'), security=g('security', 'none'), sni=g('sni'),
-                            path=g('path', '/'), host=g('host'), fp=g('fp', 'chrome'),
+        return _base_server("trojan", host, port, unquote(password), full,
+                            type=g('type', 'tcp') or 'tcp', security=_norm_security(g('security', 'tls')),
+                            sni=g('sni'), path=g('path', '/'), host=g('host'), fp=g('fp', 'chrome') or 'chrome',
                             serviceName=g('serviceName'), mode=g('mode'), authority=g('authority'),
                             extra=g('extra'))
     except Exception:
@@ -599,14 +540,18 @@ def parse_shadowsocks(config_str):
         body = full.split('://', 1)[1].split('#', 1)[0].split('?', 1)[0]
         if '@' in body:
             userinfo, hostport = body.rsplit('@', 1)
+            userinfo = unquote(userinfo)                 # aes-256-gcm%3Apass -> aes-256-gcm:pass
             if ':' not in userinfo:
-                userinfo = safe_base64_decode(userinfo)
+                userinfo = safe_base64_decode(userinfo)  # SIP002: base64(method:password)
         else:
-            dec = safe_base64_decode(body)
+            dec = safe_base64_decode(body)               # legacy: base64(method:password@host:port)
             if not dec or '@' not in dec:
                 return None
             userinfo, hostport = dec.rsplit('@', 1)
         method, password = userinfo.split(':', 1)
+        method = method.strip().lower()
+        if method not in SS_SUPPORTED_METHODS:
+            return None                                  # Xray этот шифр не поднимет
         host, port = _split_hostport(hostport)
         return _base_server("shadowsocks", host, port, password, full, method=method)
     except Exception:
@@ -626,61 +571,102 @@ def parse_hysteria2(config_str):
         if HY2_SKIP_INSECURE and (g('insecure', '0').lower() in ('1', 'true')
                                   or g('allowInsecure', '0').lower() in ('1', 'true')):
             return None
-        host, port = _split_hostport(hostport)
-        return _base_server("hysteria2", host, port, password, full,
-                            type="udp", security="tls", sni=g('sni'), fp=g('fp', 'chrome'),
+        host, port = _split_hostport(hostport, default_port=443)
+        return _base_server("hysteria2", host, port, unquote(password), full,
+                            type="udp", security="tls", sni=g('sni'), fp=g('fp', 'chrome') or 'chrome',
                             authority=g('authority'), extra=g('obfs-password'))
     except Exception:
         return None
 
 
+_PARSERS = {
+    "vless": parse_vless, "trojan": parse_trojan, "vmess": parse_vmess,
+    "shadowsocks": parse_shadowsocks, "hysteria2": parse_hysteria2,
+}
+
+
 def parse_link_into_server(link):
     try:
         link = link.strip()
-        prefix = link.split('://', 1)[0].lower()
-        proto = LINK_PROTO_NAMES.get(prefix)
+        proto = LINK_PROTO_NAMES.get(link.split('://', 1)[0].lower())
         if proto not in ENABLED_PROTOCOLS:
             return None
-        return {
-            "vless": parse_vless, "trojan": parse_trojan, "vmess": parse_vmess,
-            "shadowsocks": parse_shadowsocks, "hysteria2": parse_hysteria2,
-        }[proto](link)
+        return _PARSERS[proto](link)
     except Exception:
         return None
 
 
-def collect_parsed_servers(links):
-    servers, seen, skipped = [], set(), 0
+_HY2_INSECURE_RE = re.compile(r'(?:^|[?&])(?:insecure|allowInsecure)=(?:1|true)\b', re.I)
+_SS_METHOD_RE = re.compile(r'^ss://([^@:/?#]+):', re.I)
+
+
+def collect_parsed_servers(links, stats=None, bad_samples=None):
+    """-> (servers, Counter). Счётчики: ok:<proto> распознано | off:<что> выключено намеренно |
+    bad:<proto> НЕВАЛИДНО (парсер не смог). Для bad сохраняются примеры ссылок."""
+    servers, seen = [], set()
+    st = stats if stats is not None else collections.Counter()
     for link in links:
         if not isinstance(link, str):
-            skipped += 1
             continue
         link = link.strip()
         if not link or '://' not in link:
-            skipped += 1
+            st['bad:no-scheme'] += 1
             continue
         if link in seen:
             continue
         seen.add(link)
-        srv = parse_link_into_server(link)
+        proto = LINK_PROTO_NAMES.get(link.split('://', 1)[0].lower())
+        if proto is None:
+            st['bad:unknown-scheme'] += 1
+            continue
+        if proto not in ENABLED_PROTOCOLS:
+            st[f'off:{proto}'] += 1
+            continue
+        srv = _PARSERS[proto](link)
         if srv:
             servers.append(srv)
+            st[f'ok:{proto}'] += 1
+            continue
+        # Отделяем намеренные отсевы от реального брака
+        if proto == 'hysteria2' and HY2_SKIP_INSECURE and _HY2_INSECURE_RE.search(link):
+            st['off:hy2-insecure'] += 1
+        elif proto == 'shadowsocks' and (m := _SS_METHOD_RE.match(unquote(link))) \
+                and m.group(1).lower() not in SS_SUPPORTED_METHODS:
+            st['off:ss-cipher'] += 1
+        elif proto == 'vless' and 'security=reality' in link and 'pbk=' not in link:
+            st['off:reality-no-pbk'] += 1
         else:
-            skipped += 1
-    return servers, skipped
+            st[f'bad:{proto}'] += 1
+            if bad_samples is not None:
+                lst = bad_samples.setdefault(proto, [])
+                if len(lst) < 3:
+                    lst.append(link[:160])
+    return servers, st
+
+
+# Ссылка заканчивается на пробеле: несколько конфигов через пробел или хвост " )" —
+# раньше склеивались в одну невалидную. Хвосты markdown/JSON срезаются отдельно.
+_LINK_RE = re.compile(r"(?i)(?<![\w])((?:vless|vmess|trojan|ss|hysteria2|hy2)://[^\s\"'<>`\\]+)")
+_B64_LINE_RE = re.compile(r"^[A-Za-z0-9+/_-]{16,}={0,2}$")
+_TRAIL_JUNK = ")]},;.*"
 
 
 def extract_links(text):
-    regex = r"(?i)(?<![\w])((?:vless|vmess|trojan|ss|hysteria2|hy2)://[^\r\n\"'<>]+)"
-    links = re.findall(regex, text)
-    decoded = safe_base64_decode(text)
-    if decoded:
-        links.extend(re.findall(regex, decoded))
-    for line in text.splitlines():
-        dec_line = safe_base64_decode(line)
-        if dec_line:
-            links.extend(re.findall(regex, dec_line))
-    return list(set(links))
+    links = _LINK_RE.findall(text)
+    if not links:
+        # Файл целиком в base64 (переносы строк внутри base64 safe_base64_decode убирает)
+        dec = safe_base64_decode(text)
+        links = _LINK_RE.findall(dec) if dec else []
+        if not links:
+            # Каждая строка — отдельный base64. Декодируем ТОЛЬКО строки, похожие на base64:
+            # раньше plaintext-строки «декодировались» в мусор, а wrapped-base64 — в обрывки.
+            for line in text.splitlines():
+                line = line.strip()
+                if line and _B64_LINE_RE.match(line):
+                    d = safe_base64_decode(line)
+                    if d:
+                        links.extend(_LINK_RE.findall(d))
+    return list({l.rstrip(_TRAIL_JUNK) for l in links if l})
 
 
 def extract_ping_speed_from_link(server):
@@ -762,7 +748,6 @@ def install_xray_core():
             result = subprocess.run([XRAY_BIN, "version"], capture_output=True, text=True, timeout=2)
             if desired_version in result.stdout:
                 return
-            # Бинарник рабочий, но версия другая: не удаляем, пока не скачаем новый
             logger.info(f"🔄 Xray {result.stdout.split()[1] if result.stdout else '?'} -> {desired_version}")
         except Exception:
             logger.info("🔄 Xray неисправен — переустанавливаем")
@@ -788,16 +773,11 @@ def install_xray_core():
 
 
 _XRAY_PROTO_OK = {}
-# Маркеры в выводе xray, означающие именно ОТСУТСТВИЕ протокола/транспорта в сборке.
-# Любая другая ошибка (кривой пробный конфиг, «vnext is empty» и т. п.) протокол НЕ отключает.
 _UNSUPPORTED_MARKERS = ("unknown config id", "unknown protocol", "unknown transport",
                         "unsupported protocol", "not supported")
 
 
 def xray_supports_protocol(proto_internal):
-    """`xray run -test` на ПОЛНОМ пробном конфиге, собранном generate_xray_config
-    (тем же кодом, что и боевые тесты). Раньше конфиг был с пустыми settings,
-    Xray падал на сборке и ВСЕ протоколы объявлялись неподдерживаемыми."""
     if proto_internal in _XRAY_PROTO_OK:
         return _XRAY_PROTO_OK[proto_internal]
     dummy_uuid = "00000000-0000-0000-0000-000000000000"
@@ -806,7 +786,7 @@ def xray_supports_protocol(proto_internal):
                             type="udp", security="tls", sni="example.com")
     elif proto_internal == "shadowsocks":
         fake = _base_server("shadowsocks", "127.0.0.1", 8388, "password", "", method="aes-256-gcm")
-    else:  # vless / vmess / trojan
+    else:
         fake = _base_server(proto_internal, "127.0.0.1", 443, dummy_uuid, "",
                             security="tls", sni="example.com")
     ok, path, port = True, None, get_free_port()
@@ -875,7 +855,6 @@ def release_port(port):
 
 
 def wait_xray_ready(proc, port, timeout=XRAY_START_TIMEOUT):
-    """Ждём открытия порта; если процесс умер (кривой конфиг) — сразу False."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -902,7 +881,7 @@ def generate_xray_config(server, local_port):
     if server['protocol'] == 'vless':
         user = {"id": server['uuid'], "encryption": "none"}
         flow = server.get('flow', '')
-        if flow and server['type'] in ('tcp', 'h2', 'http'):
+        if flow and server['type'] in ('tcp', 'raw', 'h2', 'http') and server['security'] in ('tls', 'reality'):
             user['flow'] = flow
         outbound['settings'] = {"vnext": [{"address": server['ip'], "port": server['port'], "users": [user]}]}
     elif server['protocol'] == 'trojan':
@@ -961,7 +940,7 @@ def generate_xray_config(server, local_port):
                     if '=' in pair:
                         k, v = pair.split('=', 1)
                         extra_dict[k.strip()] = v.strip()
-            if extra_dict:
+            if isinstance(extra_dict, dict) and extra_dict:
                 x["extra"] = extra_dict
         ss["network"] = "xhttp"
         ss["xhttpSettings"] = x
@@ -988,8 +967,21 @@ def generate_xray_config(server, local_port):
     return _wrap_config(outbound, local_port)
 
 
+# Причины, по которым Xray не запустился (для диагностики xray_start)
+_XRAY_ERR_LOCK = threading.Lock()
+_XRAY_START_ERRORS = collections.Counter()
+_TS_RE = re.compile(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?\s*")
+
+
+def _note_xray_error(msg):
+    msg = _TS_RE.sub("", (msg or "").strip())[:140] or "процесс жив, но порт не открылся за таймаут"
+    with _XRAY_ERR_LOCK:
+        _XRAY_START_ERRORS[msg] += 1
+
+
 class XrayTunnel:
-    """Контекст: конфиг во временный файл, запуск Xray, ожидание порта, уборка."""
+    """Контекст: конфиг во временный файл, запуск Xray, ожидание порта, уборка.
+    stderr идёт в PIPE: при неудачном старте причина попадает в self.error."""
 
     def __init__(self, server):
         self.server = server
@@ -997,6 +989,7 @@ class XrayTunnel:
         self.path = None
         self.proc = None
         self.ready = False
+        self.error = ""
 
     def __enter__(self):
         self.port = get_free_port()
@@ -1005,9 +998,23 @@ class XrayTunnel:
             json.dump(cfg, tmp)
             self.path = tmp.name
         self.proc = subprocess.Popen([XRAY_BIN, "-c", self.path],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         self.ready = wait_xray_ready(self.proc, self.port)
+        if not self.ready:
+            self.error = self._collect_error()
         return self
+
+    def _collect_error(self):
+        try:
+            self.proc.kill()
+        except Exception:
+            pass
+        try:
+            _, err = self.proc.communicate(timeout=1.0)
+        except Exception:
+            return ""
+        lines = [l for l in (err or "").splitlines() if l.strip()]
+        return lines[-1].strip() if lines else ""
 
     @property
     def proxies(self):
@@ -1015,14 +1022,20 @@ class XrayTunnel:
 
     def __exit__(self, *exc):
         if self.proc:
-            try:
-                self.proc.terminate()
-                self.proc.wait(timeout=0.5)
-            except Exception:
+            if self.proc.poll() is None:
                 try:
-                    self.proc.kill()
+                    self.proc.terminate()
+                    self.proc.wait(timeout=0.5)
                 except Exception:
-                    pass
+                    try:
+                        self.proc.kill()
+                    except Exception:
+                        pass
+            try:
+                if self.proc.stderr:
+                    self.proc.stderr.close()
+            except Exception:
+                pass
         if self.path:
             try:
                 os.remove(self.path)
@@ -1066,7 +1079,6 @@ def ping_filter(server):
 
 
 def cf_trace(sess, proxies, attempts=1):
-    """(latency_ms, country) через туннель или (None, None)."""
     for i in range(attempts):
         try:
             t0 = time.perf_counter()
@@ -1111,10 +1123,11 @@ def measure_download_speed(sess, proxies):
 
 
 def deep_verify(server):
-    """STAGE 1. -> (server, None) | (None, reason). Всё внутри try: поток не падает."""
+    """STAGE 1. -> (server, None) | (None, reason)."""
     try:
         with XrayTunnel(server) as tun:
             if not tun.ready:
+                _note_xray_error(tun.error)
                 return None, 'xray_start'
             with proxy_session() as ps:
                 latency, country = cf_trace(ps, tun.proxies)
@@ -1136,7 +1149,7 @@ def deep_verify(server):
         return None, 'xray_error'
 
 
-_TRANSIENT_REASONS = {"trace_http", "xray_error", "xray_start"}
+_TRANSIENT_REASONS = {"trace_http", "xray_error"}   # xray_start — детерминированная ошибка конфига, повтор бессмыслен
 
 
 def deep_verify_with_retry(server):
@@ -1153,6 +1166,7 @@ def measure_node_stats(server, check_speed=True):
         tcp_ping = get_accurate_ping(server['ip'], server['port'], attempts=3)
         with XrayTunnel(server) as tun:
             if not tun.ready:
+                _note_xray_error(tun.error)
                 return server, False
             with proxy_session() as ps:
                 _, country = cf_trace(ps, tun.proxies, attempts=2)
@@ -1206,19 +1220,16 @@ def detect_test_location():
 # ─────────────────────────────────────────────────────────────────────────────
 # ИСТОЧНИКИ
 # ─────────────────────────────────────────────────────────────────────────────
-# github.com/<owner>/<repo>/blob|raw/<branch>/<path>  ->  raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
 _GH_BLOB_RE = re.compile(r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$", re.I)
 _HTML_RE = re.compile(r"^\s*<(?:!doctype|html|head|body)", re.I)
 
 
 def normalize_source_url(url):
-    """Blob-страницы GitHub — это HTML с ОБРЕЗАННЫМ содержимым (большие файлы не
-    показываются целиком, спецсимволы экранированы как \\u0026). Переводим в raw."""
     url = url.strip()
     m = _GH_BLOB_RE.match(url)
     if m:
         owner, repo, rest = m.groups()
-        rest = rest.split('?', 1)[0].split('#', 1)[0]      # ?raw=true, ?plain=1 и т. п.
+        rest = rest.split('?', 1)[0].split('#', 1)[0]
         return f"https://raw.githubusercontent.com/{owner}/{repo}/{rest}"
     return url
 
@@ -1230,8 +1241,7 @@ def fetch_source(url):
         if resp.status_code == 200:
             text = resp.text[:MAX_SOURCE_CHARS]
             if _HTML_RE.match(text[:400]):
-                logger.warning(f"⚠️ Источник {real[:60]}: пришла HTML-страница, а не файл — "
-                               f"ссылки будут неполными/битыми. Нужен прямой (raw) URL.")
+                logger.warning(f"⚠️ Источник {real[:60]}: пришла HTML-страница, а не файл — нужен прямой (raw) URL.")
             links = extract_links(text)
             logger.info(f"📥 Источник {real[:60]} -> {len(links)} ссылок")
             return links
@@ -1286,6 +1296,11 @@ def time_left():
     return RUN_BUDGET_SEC - (time.time() - RUN_START)
 
 
+def _fmt_stats(stats, prefix):
+    items = sorted((k.split(':', 1)[1], v) for k, v in stats.items() if k.startswith(prefix))
+    return ", ".join(f"{k}={v}" for k, v in items) or "—"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1310,7 +1325,6 @@ def main():
     logger.info(f"🎛 Включённые протоколы: {', '.join(enabled_list)}")
     unsupported = [p for p in enabled_list if not xray_supports_protocol(p)]
     if unsupported and len(unsupported) == len(enabled_list):
-        # Xray без VLESS не существует: если забраковано ВСЁ — сломана проверка, а не Xray.
         logger.error("❌ Проверка протоколов забраковала ВСЕ включённые протоколы — это сбой самой проверки. "
                      "Её результат игнорирую, тестирую всё.")
         unsupported = []
@@ -1324,10 +1338,10 @@ def main():
     prev_count = len(prev_servers)
 
     # ── Источники (параллельно, с лимитом ожидания) ──
-    # Нормализуем ДО дедупликации: blob- и raw-варианты одного файла — один источник.
     src_list = list(dict.fromkeys(normalize_source_url(u) for u in SOURCES if u and u.strip()))
     logger.info(f"🌐 Загрузка источников: {len(src_list)} URL в списке ({', '.join(enabled_list)})...")
-    all_configs, total_skipped = [], 0
+    all_configs = []
+    parse_stats, bad_samples = collections.Counter(), {}
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=10)
     fut_url = {ex.submit(fetch_source, u): u for u in src_list}
     fut_url[ex.submit(search_github_configs)] = "<github-search>"
@@ -1337,9 +1351,8 @@ def main():
     src_ok = 0
     for f in done_set:
         try:
-            servers, skipped = collect_parsed_servers(f.result())
+            servers, _ = collect_parsed_servers(f.result(), parse_stats, bad_samples)
             all_configs.extend(servers)
-            total_skipped += skipped
             if fut_url[f] != "<github-search>":
                 src_ok += 1
         except Exception as e:
@@ -1350,24 +1363,28 @@ def main():
         logger.warning(f"⏳ Источников не дождались (> {SOURCE_WAIT_SEC} сек): {len(lost)} — "
                        + ", ".join(u[:60] for u in lost[:10]))
     logger.info(f"📥 Источников обработано: {src_ok}/{len(src_list)}")
-    if total_skipped:
-        logger.info(f"🧹 Пропущено выключенных протоколов/невалидных ссылок: {total_skipped}")
 
     if os.path.exists(LOCAL_SOURCE_FILE):
         try:
             with open(LOCAL_SOURCE_FILE, "r", encoding="utf-8", errors="ignore") as lf:
-                local_servers, _ = collect_parsed_servers(extract_links(lf.read()))
+                local_servers, _ = collect_parsed_servers(extract_links(lf.read()), parse_stats, bad_samples)
             all_configs.extend(local_servers)
             logger.info(f"📁 {LOCAL_SOURCE_FILE}: {len(local_servers)} серверов")
         except Exception as e:
             logger.error(f"❌ Ошибка чтения {LOCAL_SOURCE_FILE}: {e}")
 
+    # Разбивка разбора ссылок (счётчики по всем источникам; дубли между источниками считаются каждый раз)
+    logger.info(f"🧾 Разбор ссылок — распознано: {_fmt_stats(parse_stats, 'ok:')}")
+    logger.info(f"   выключено намеренно (протокол/шифр/insecure): {_fmt_stats(parse_stats, 'off:')}")
+    logger.info(f"   НЕВАЛИДНЫЕ (парсер не смог): {_fmt_stats(parse_stats, 'bad:')}")
+    for proto, samples in bad_samples.items():
+        for l in samples:
+            logger.info(f"   ✗ пример {proto}: {l}")
+
     all_configs = [c for c in all_configs if c['protocol'] not in unsupported]
     fresh_by_id = {node_id_of(c): c for c in all_configs}
-    logger.info(f"🔍 Уникальных конфигов из источников: {len(fresh_by_id)}")
+    logger.info(f"🔍 Уникальных конфигов из источников: {len(fresh_by_id)} (распознано ссылок: {len(all_configs)})")
 
-    # Старый узел получает СВЕЖУЮ ссылку из источника (pbk/sid/path могли смениться),
-    # но сохраняет накопленные пинг/скорость/метку from_prev.
     refreshed = 0
     for s in prev_servers:
         fr = fresh_by_id.get(node_id_of(s))
@@ -1383,10 +1400,9 @@ def main():
     logger.info(f"⚡ Пинг старых серверов ({len(prev_servers)})...")
     alive_prev, dead_prev = run_ping_stage(prev_servers, "Старые")
 
-    pool = []            # итоговые кандидаты в подписку
-    handled_ids = set()  # ip:port, уже обработанные как «старые»
+    pool = []
+    handled_ids = set()
 
-    # Мёртвые по пингу старые: грейс или окончательный отсев
     grace_dead = 0
     for s in dead_prev:
         if mark_failure(history, s) and s.get('speed_mbps', 0) >= SPEED_HARD_LIMIT:
@@ -1398,25 +1414,23 @@ def main():
     if grace_dead:
         logger.info(f"🕊 Старых не ответивших на пинг оставлено в грейс-периоде: {grace_dead}")
 
-    # Живые старые: кого перепроверять по скорости
     prev_keep, prev_recheck = [], []
     for s in alive_prev:
         nid = node_id_of(s)
         handled_ids.add(nid)
-        # Узлы со скоростью < порога (или без данных) — обязательно перепроверить
         if speed_due_for_check(history, nid) or s.get('speed_mbps', 0) < SPEED_HARD_LIMIT:
             prev_recheck.append(s)
         else:
             prev_keep.append(s)
     logger.info(f"   Старых с актуальной скоростью: {len(prev_keep)} | на перепроверку скорости: {len(prev_recheck)}")
 
-    # ── STAGE 0: пинг новых (только тех, кого нет среди старых) ──
+    # ── STAGE 0 ──
     fresh_candidates = [c for nid, c in fresh_by_id.items() if nid not in handled_ids]
     logger.info(f"⚡ ЭТАП 0: TCP-пинг новых. Кандидатов: {len(fresh_candidates)} "
                 f"(совпали со старыми, не дублируем: {len(fresh_by_id) - len(fresh_candidates)})")
     new_alive, _ = run_ping_stage(fresh_candidates, "Новые")
 
-    # ── STAGE 1: Xray-тест (старые на перепроверку + новые живые) — дублей нет ──
+    # ── STAGE 1 ──
     to_test = prev_recheck + new_alive
     to_test.sort(key=lambda s: (0 if s.get('from_prev') else 1, s.get('tcp_ping_ms', 9999)))
     if len(to_test) > STAGE1_MAX_CANDIDATES:
@@ -1458,13 +1472,16 @@ def main():
         if timed_out:
             cancelled = sum(1 for f in fm if f.cancel())
             logger.warning(f"⏳ Бюджет STAGE 1 исчерпан: протестировано {done}, снято с очереди {cancelled}.")
-        # Старые, которых не успели протестировать — НЕ считаем провалом, оставляем как есть
         for f, s in fm.items():
             if f not in processed and s.get('from_prev'):
                 untested_prev.append(s)
 
     logger.info(f"📊 ЭТАП 1: {len(to_test)} кандидатов за {time.time() - t1:.0f} сек | прошло {len(tested)} | "
                 f"отсев: {', '.join(f'{k}={v}' for k, v in sorted(fail_stats.items())) or '—'}")
+    if _XRAY_START_ERRORS:
+        logger.info("   Причины xray_start (топ-5, из stderr Xray):")
+        for msg, n in _XRAY_START_ERRORS.most_common(5):
+            logger.info(f"     {n:>4} × {msg}")
 
     # ── Сборка пула ──
     for s in prev_keep:
@@ -1520,7 +1537,7 @@ def main():
                 ok = False
             if not ok:
                 if s.get('from_prev') and mark_failure(history, s):
-                    s['grace'] = True          # старый — грейс со старыми показателями
+                    s['grace'] = True
                     grace2 += 1
                 else:
                     dropped_new += 1
@@ -1531,12 +1548,8 @@ def main():
                         + (" (грейс)" if s.get('grace') else ""))
     logger.info(f"📊 ЭТАП 2: {time.time() - t2:.0f} сек | отсеяно {dropped_new}, в грейс {grace2}")
 
-    # Итоговый порядок детерминирован (as_completed его перемешивал)
     verified.sort(key=lambda x: (0 if x.get('from_prev') else 1, x.get('real_delay', 9999), -x.get('score', 0)))
 
-    # ── Предохранитель: подозрительно маленький результат — состояние НЕ трогаем ──
-    # Иначе один сбойный прогон (сеть, Xray, проверка протоколов) перезаписал бы
-    # subscription и историю, и следующий прогон стартовал бы с пустого состояния.
     if prev_count and len(verified) < max(1, prev_count * MIN_RESULT_RATIO_PCT // 100):
         logger.error(f"❌ Получено {len(verified)} узлов против {prev_count} в прошлой подписке "
                      f"(< {MIN_RESULT_RATIO_PCT}%) — похоже на сбой. subscription и история НЕ перезаписаны.")
@@ -1548,7 +1561,6 @@ def main():
     for s in verified:
         country = COUNTRIES_RU.get(s['country'], f"🏳️ {s['country']}")
         star = "🌟" if history.get(node_id_of(s), {}).get("streak", 0) >= 3 else ""
-        # Формат имени: [Ping:<мс>ms|Speed:<мб/с>Mbps] — парсится при следующем запуске
         name = f"{star}{get_speed_badge(s['speed_mbps'])}{country} [Ping:{s.get('real_delay', 0)}ms|Speed:{s.get('speed_mbps', 0.0)}Mbps]"
         result_links.append(f"{s['original'].split('#')[0]}#{quote(name)}")
         json_stats["servers"].append({
@@ -1558,7 +1570,6 @@ def main():
         })
 
     sealed = seal("\n".join(result_links), SUB_KEY)
-    # Самопроверка: файл обязан расшифровываться тем же ключом
     assert unseal(sealed, SUB_KEY).count("\n") + 1 == max(1, len(result_links))
 
     publish_subscription(sealed)
@@ -1566,7 +1577,6 @@ def main():
         with open(JSON_FILE, 'w', encoding='utf-8') as f:
             json.dump(json_stats, f, indent=2, ensure_ascii=False)
 
-    # История — ПОСЛЕ подписки, чтобы при обрыве не разойтись
     pruned = prune_history(history)
     save_history(history)
     write_meta(len(result_links), prev_count, len(sealed))

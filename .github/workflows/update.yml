@@ -121,20 +121,19 @@ jobs:
           fi
           echo "✅ subscription: ${NODES} узлов, ${SIZE} байт"
           
-      - name: 📤 Publish to data branch
+      - name: 📤 Commit to main
         run: |
           set -euo pipefail
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          # Изолированный worktree с orphan-веткой: один коммит, без истории, без конфликтов с кодом.
-          rm -rf /tmp/data && mkdir -p /tmp/data
-          cp subscription stats_history.json /tmp/data/
-          cd /tmp/data
-          git init -q -b "$DATA_BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add subscription stats_history.json
+          git diff --cached --quiet && { echo "ℹ️ Изменений нет"; exit 0; }
           git commit -q -m "🚀 Update: $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$DATA_BRANCH"
-          echo "✅ Опубликовано: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${DATA_BRANCH}/subscription"
+          for i in 1 2 3; do
+            git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase -X theirs "origin/${GITHUB_REF_NAME}" || git rebase --abort
+          done
 
       # ─── ОЧИСТКА ИСТОРИИ WORKFLOW ───
       # По решению владельца удаляются ВСЕ прошлые УСПЕШНЫЕ запуски (не «N последних»).

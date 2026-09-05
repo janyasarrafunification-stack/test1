@@ -89,69 +89,6 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
     "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
-
-    # --- Новые источники: raw-подписки И обычные txt (истоники.txt) ---
-    # GitHub blob-ссылки нормализованы в raw; корни репо без пути к файлу отброшены.
-    # Пустые/битые строки и дубликаты НЕ страшны: их отбрасывают extract_links
-    # и collect_parsed_servers — скрипт не падает на мусорном источнике.
-    "https://raw.githubusercontent.com/FLEXIY0/matryoshka-vpn/main/configs/russia_whitelist.txt",
-    "https://raw.githubusercontent.com/LimeHi/LimeVPN/main/whitelist.txt",
-    "https://raw.githubusercontent.com/dgshsh031-code/free-vpn-sub/main/sub.txt",
-    "https://raw.githubusercontent.com/vit352018/Claude-VPN-Parcer/main/output/WIFI_BL.txt",
-    "https://raw.githubusercontent.com/vit352018/Claude-VPN-Parcer/main/output/MOB_WL.txt",
-    "https://raw.githubusercontent.com/aviamastersgh/vpn-free-russia/main/ru_configs.txt",
-    "https://raw.githubusercontent.com/aviamastersgh/vpn-free-russia/main/verified_configs.txt",
-    "https://raw.githubusercontent.com/TonyPro13/vpn-subscription/main/output/subscription.txt",
-    "https://raw.githubusercontent.com/MELVPNBOT/BrawlVPN/main/alive.txt",
-    "https://raw.githubusercontent.com/sepeli88/My-sub/main/subscription.txt",
-    "https://raw.githubusercontent.com/flaafix/AetrisVPN/main/AetrisVPN.txt",
-    "https://raw.githubusercontent.com/ali13788731/vpn/main/sub_raw.txt",
-    "https://raw.githubusercontent.com/SoliSpirit/SolVPN/main/Subscribes/sub1.txt",
-    "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/16.txt",
-    "https://raw.githubusercontent.com/hiztin/VLESS-PO-GRIBI/main/deploy/subscriptions/1.txt",
-    "https://raw.githubusercontent.com/hiztin/VLESS-PO-GRIBI/main/deploy/subscriptions/11.txt",
-    "https://raw.githubusercontent.com/whoahaow/rjsxrd/main/githubmirror/bypass/bypass-all.txt",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
-    "https://raw.githubusercontent.com/yitong2333/proxy-minging/main/v2ray.txt",
-    "https://raw.githubusercontent.com/Hidashimora/free-vpn-anti-rkn/main/configs/1.2.txt",
-    "https://raw.githubusercontent.com/miladtahanian/V2RayCFGDumper/main/sub.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt",
-    "https://raw.githubusercontent.com/CidVpn/cid-vpn-config/main/general.txt",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
-    "https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/mixed_iran.txt",
-    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/26.txt",
-    "https://raw.githubusercontent.com/R3ZARAHIMI/tg-v2ray-configs-every2h/main/conf-week.txt",
-    "https://raw.githubusercontent.com/LalatinaHub/Mineral/master/result/nodes",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Sub1.txt",
-    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Sub2.txt",
-    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector_Py/main/sub/Mix/mix.txt",
-    "https://raw.githubusercontent.com/FSystem88/vless-keys/main/keys.txt",
-    "https://raw.githubusercontent.com/MhdiTaheri/V2rayCollector/main/sub/mix",
-    "https://raw.githubusercontent.com/wuqb2i4f/xray-config-toolkit/main/output/base64/mix-uri",
-    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/23.txt",
-    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/main/Config/vless.txt",
-    "https://raw.githubusercontent.com/ksenkovsolo/HardVPN-bypass-WhiteLists-/main/vpn-lte/WHITELIST-ALL.txt",
-    "https://raw.githubusercontent.com/prominbro/sub/main/212.txt",
-    "https://gist.githubusercontent.com/LIKE-FURRY/ea91d3f11eb50e849c6007754417dc59/raw/d40546055dd1b382d3a2e4f6f810b68d9406cacf/GothicVPNFree-iz-githab",
-    "https://raw.githubusercontent.com/xolirx/list-check/main/subs/6788436831_lte.txt?v=1786267086",
-    "https://raw.githubusercontent.com/xolirx/list-check/main/subs/6788436831_black.txt?v=1786267051",
-    "https://gist.githubusercontent.com/sori99346-cyber/bd11c98ceecbee68bf8aa7452a10068a/raw/49bcade516dc30646fca8eb12e902493920114c9/vpn.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/683e002b7255b1da0c9c5204272bfeab/raw/9ad935bd17429ed21a020f40d5180a23bc5f45c2/vpn.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/ed70bd2f52b04ce73a578f6ed90f7952/raw/9edc274426f05c534f2f1b553989fbb4d862f88c/happ.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/ddb62003fb73adc734c772aa1d9588e6/raw/2c96bdd9077b8bd48c8006af3ec328994709d9a9/happ.txt",
-    "https://gist.githubusercontent.com/sori99346-cyber/81672bad6e3fcf8f4ba7dc5c94dd5d2d/raw/de8193dafbbd016b7d96222d77764592ec532570/@ConfigiHapp.txt",
-    "https://gist.githubusercontent.com/Semenhach1/49b3bdf4e07c64d28b7c79ee185ecb3b/raw/r_8742354695.txt",
-    "https://gist.githubusercontent.com/LIKE-FURRY/af64b3ca475a5a66f0a47c1e07038fd5/raw/@FURRY_VPN_FREE-PREMIUM-CLUCHI-FILTR-IZ-GITHAB",
-    "https://raw.githubusercontent.com/LimeHi/LimeVPN/main/blacklist.txt",
-    "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/BLACK_FULL.txt",
-    "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/WHITE_FULL.txt",
-    "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/Sub.txt",
-    "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
-    "https://raw.githubusercontent.com/vveg26/v2ray/main/Sub",
-    "https://raw.githubusercontent.com/v2ray-mobi/v2ray-configs/main/sub",
-    "https://raw.githubusercontent.com/yuandj/sing-box/main/sub",
-    "https://raw.githubusercontent.com/jackmo-ai/v2ray-configs/main/sub",
-    
 ]
 
 XRAY_BIN = "./xray"
@@ -494,9 +431,9 @@ def safe_base64_decode(s):
             return ""
 
 
-def _base_server(proto, host, port, uuid, original, **kw):
+def _base_server(proto, ip_addr, port, uuid, original, **kw):
     d = {
-        "protocol": proto, "ip": host, "port": int(port), "uuid": uuid,
+        "protocol": proto, "ip": ip_addr, "port": int(port), "uuid": uuid,
         "type": "tcp", "security": "none", "flow": "", "sni": "", "pbk": "", "sid": "", "spx": "/",
         "path": "/", "host": "", "fp": "chrome", "serviceName": "", "mode": "", "authority": "",
         "extra": "", "original": original, "country": "XX", "real_delay": 9999, "speed_mbps": 0.0,
@@ -663,6 +600,27 @@ _HY2_INSECURE_RE = re.compile(r'(?:^|[?&])(?:insecure|allowInsecure)=(?:1|true)\
 _SS_METHOD_RE = re.compile(r'^ss://([^@:/?#]+):', re.I)
 
 
+def _ss_method_of(link):
+    """Извлекает method из ss:// ссылки (SIP002 base64 или plaintext), либо None."""
+    try:
+        body = link.split('://', 1)[1].split('#', 1)[0].split('?', 1)[0]
+        if '@' in body:
+            userinfo = body.rsplit('@', 1)[0]
+        else:
+            dec = safe_base64_decode(body)
+            if not dec or '@' not in dec:
+                return None
+            userinfo = dec.rsplit('@', 1)[0]
+        if ':' in userinfo:
+            return userinfo.split(':', 1)[0].strip().lower()
+        dec = safe_base64_decode(unquote(userinfo))
+        if dec and ':' in dec:
+            return dec.split(':', 1)[0].strip().lower()
+    except Exception:
+        return None
+    return None
+
+
 def collect_parsed_servers(links, stats=None, bad_samples=None):
     """-> (servers, Counter). Счётчики: ok:<proto> распознано | off:<что> выключено намеренно |
     bad:<proto> НЕВАЛИДНО (парсер не смог). Для bad сохраняются примеры ссылок."""
@@ -695,6 +653,9 @@ def collect_parsed_servers(links, stats=None, bad_samples=None):
             st['off:hy2-insecure'] += 1
         elif proto == 'shadowsocks' and (m := _SS_METHOD_RE.match(unquote(link))) \
                 and m.group(1).lower() not in SS_SUPPORTED_METHODS:
+            st['off:ss-cipher'] += 1
+        elif proto == 'shadowsocks' and (m2 := _ss_method_of(link)) \
+                and m2 not in SS_SUPPORTED_METHODS:
             st['off:ss-cipher'] += 1
         elif proto == 'vless' and 'security=reality' in link and 'pbk=' not in link:
             st['off:reality-no-pbk'] += 1

@@ -86,6 +86,7 @@ JSON_FILE = 'stats.json'
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
 LOCAL_SOURCE_FILE = 'my_source'
+META_FILE = 'run_meta.json'           # nodes/prev_nodes/bytes — для sanity-check в воркфлоу
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🔐 КЛЮЧИ. В GitHub Actions задаются через Secrets (env V1A_SUB_KEY / V1A_HISTORY_KEY).
@@ -170,6 +171,9 @@ SPEED_CHECK_INTERVAL = 8 * 3600              # скорость старых —
 # Грейс: старый узел выкидывается только после GRACE_MISSES+1 неудач ПОДРЯД.
 GRACE_MISSES = int(os.getenv("V1A_GRACE_MISSES", "2"))
 HISTORY_TTL_DAYS = int(os.getenv("V1A_HISTORY_TTL_DAYS", "14"))
+# Предохранитель: если узлов получилось меньше N% от прошлой подписки — это сбой
+# (сеть, Xray, проверка протоколов), файлы состояния НЕ перезаписываем.
+MIN_RESULT_RATIO_PCT = int(os.getenv("V1A_MIN_RATIO_PCT", "30"))
 
 SPEED_TEST_URLS = [
     "https://speed.cloudflare.com/__down?bytes=5000000",
@@ -346,6 +350,17 @@ def publish_subscription(sealed_text: str):
             logger.error("❌ Удалённая публикация не удалась — клиенты увидят прошлую версию файла")
     else:
         logger.info(f"💾 Режим одного репозитория: {OUTPUT_FILE} закоммитит воркфлоу")
+
+
+def write_meta(nodes: int, prev_nodes: int, size_bytes: int):
+    """Метаданные прогона для sanity-check в воркфлоу (размер файла в байтах
+    сравнивать нельзя: сжатый V1A2-формат в разы меньше старого)."""
+    try:
+        with open(META_FILE, "w", encoding="utf-8") as f:
+            json.dump({"nodes": nodes, "prev_nodes": prev_nodes, "bytes": size_bytes,
+                       "ts": int(time.time())}, f)
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось записать {META_FILE}: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -699,38 +714,53 @@ def install_xray_core():
         logger.error(f"❌ Критическая ошибка установки Xray: {e}")
 
 
-XRAY_PROTO_BY_INTERNAL = {"hysteria2": "hysteria"}
 _XRAY_PROTO_OK = {}
+# Маркеры в выводе xray, означающие именно ОТСУТСТВИЕ протокола/транспорта в сборке.
+# Любая другая ошибка (кривой пробный конфиг, «vnext is empty» и т. п.) протокол НЕ отключает.
+_UNSUPPORTED_MARKERS = ("unknown config id", "unknown protocol", "unknown transport",
+                        "unsupported protocol", "not supported")
 
 
-def xray_supports_protocol(proto):
-    """`xray run -test` на минимальном конфиге. Поддержка = returncode 0."""
-    if proto in _XRAY_PROTO_OK:
-        return _XRAY_PROTO_OK[proto]
-    ok = False
-    path = None
+def xray_supports_protocol(proto_internal):
+    """`xray run -test` на ПОЛНОМ пробном конфиге, собранном generate_xray_config
+    (тем же кодом, что и боевые тесты). Раньше конфиг был с пустыми settings,
+    Xray падал на сборке и ВСЕ протоколы объявлялись неподдерживаемыми."""
+    if proto_internal in _XRAY_PROTO_OK:
+        return _XRAY_PROTO_OK[proto_internal]
+    dummy_uuid = "00000000-0000-0000-0000-000000000000"
+    if proto_internal == "hysteria2":
+        fake = _base_server("hysteria2", "127.0.0.1", 443, dummy_uuid, "",
+                            type="udp", security="tls", sni="example.com")
+    elif proto_internal == "shadowsocks":
+        fake = _base_server("shadowsocks", "127.0.0.1", 8388, "password", "", method="aes-256-gcm")
+    else:  # vless / vmess / trojan
+        fake = _base_server(proto_internal, "127.0.0.1", 443, dummy_uuid, "",
+                            security="tls", sni="example.com")
+    ok, path, port = True, None, get_free_port()
     try:
-        settings = {"version": 2} if proto == "hysteria" else {}
-        cfg = {
-            "log": {"loglevel": "none"},
-            "inbounds": [{"port": 0, "listen": "127.0.0.1", "protocol": "http"}],
-            "outbounds": [{"protocol": proto, "settings": settings}],
-        }
+        cfg = generate_xray_config(fake, port)
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
             json.dump(cfg, tmp)
             path = tmp.name
         r = subprocess.run([XRAY_BIN, "run", "-c", path, "-test"], capture_output=True, text=True, timeout=8)
-        out = (r.stdout or "") + (r.stderr or "")
-        ok = r.returncode == 0 and "unknown config id" not in out
-    except Exception:
-        ok = False
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0:
+            if any(m in out.lower() for m in _UNSUPPORTED_MARKERS):
+                ok = False
+                logger.info(f"ℹ️ Xray без поддержки {proto_internal}: {out[:160]}")
+            else:
+                logger.warning(f"⚠️ Пробный конфиг {proto_internal} не собрался (код {r.returncode}), "
+                               f"протокол оставлен включённым: {out[:200]}")
+    except Exception as e:
+        logger.warning(f"⚠️ Проверка протокола {proto_internal} не выполнена ({e}) — считаю поддерживаемым")
     finally:
+        release_port(port)
         if path:
             try:
                 os.remove(path)
             except OSError:
                 pass
-    _XRAY_PROTO_OK[proto] = ok
+    _XRAY_PROTO_OK[proto_internal] = ok
     return ok
 
 
@@ -1179,18 +1209,24 @@ def main():
     install_xray_core()
     if not os.path.exists(XRAY_BIN):
         logger.error(f"❌ Не удалось найти {XRAY_BIN}")
-        return
+        sys.exit(1)
 
     enabled_list = sorted(ENABLED_PROTOCOLS)
     logger.info(f"🎛 Включённые протоколы: {', '.join(enabled_list)}")
-    unsupported = [p for p in enabled_list if not xray_supports_protocol(XRAY_PROTO_BY_INTERNAL.get(p, p))]
-    if unsupported:
+    unsupported = [p for p in enabled_list if not xray_supports_protocol(p)]
+    if unsupported and len(unsupported) == len(enabled_list):
+        # Xray без VLESS не существует: если забраковано ВСЁ — сломана проверка, а не Xray.
+        logger.error("❌ Проверка протоколов забраковала ВСЕ включённые протоколы — это сбой самой проверки. "
+                     "Её результат игнорирую, тестирую всё.")
+        unsupported = []
+    elif unsupported:
         logger.warning(f"⚠️ Xray НЕ поддерживает: {', '.join(unsupported)} — их узлы будут пропущены.")
 
     history = load_history()
 
     # ── Старые серверы ──
     prev_servers = [s for s in load_previous_subscription() if s['protocol'] not in unsupported]
+    prev_count = len(prev_servers)
 
     # ── Источники (параллельно, с лимитом ожидания) ──
     logger.info(f"🌐 Загрузка источников ({', '.join(enabled_list)})...")
@@ -1396,6 +1432,15 @@ def main():
     # Итоговый порядок детерминирован (as_completed его перемешивал)
     verified.sort(key=lambda x: (0 if x.get('from_prev') else 1, x.get('real_delay', 9999), -x.get('score', 0)))
 
+    # ── Предохранитель: подозрительно маленький результат — состояние НЕ трогаем ──
+    # Иначе один сбойный прогон (сеть, Xray, проверка протоколов) перезаписал бы
+    # subscription и историю, и следующий прогон стартовал бы с пустого состояния.
+    if prev_count and len(verified) < max(1, prev_count * MIN_RESULT_RATIO_PCT // 100):
+        logger.error(f"❌ Получено {len(verified)} узлов против {prev_count} в прошлой подписке "
+                     f"(< {MIN_RESULT_RATIO_PCT}%) — похоже на сбой. subscription и история НЕ перезаписаны.")
+        write_meta(len(verified), prev_count, 0)
+        sys.exit(2)
+
     # ── Формирование подписки ──
     result_links, json_stats = [], {"servers": []}
     for s in verified:
@@ -1422,6 +1467,7 @@ def main():
     # История — ПОСЛЕ подписки, чтобы при обрыве не разойтись
     pruned = prune_history(history)
     save_history(history)
+    write_meta(len(result_links), prev_count, len(sealed))
 
     logger.info(f"💾 Готово: {len(result_links)} узлов, файл {len(sealed) // 1024} КБ. История: {len(history)} записей "
                 f"(удалено устаревших: {pruned}). Всего прогон: {time.time() - RUN_START:.0f} сек")

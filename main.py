@@ -65,17 +65,21 @@ logger.addHandler(_h)
 # ─────────────────────────────────────────────────────────────────────────────
 GITHUB_TOKEN = os.getenv("TOKEN", "")
 
+# Ссылки вида github.com/<owner>/<repo>/blob/<branch>/<file> можно вставлять как есть:
+# normalize_source_url() сам переведёт их в raw.githubusercontent.com. Blob-страница —
+# это HTML с обрезанным содержимым (большие файлы GitHub не показывает целиком),
+# поэтому напрямую из неё ссылки приезжают неполными и частично битыми.
 SOURCES = [
     # --- Базовые источники ---
-    "https://github.com/willafrid/skorodum.vpn/blob/main/cron-base64/combined.txt",
-    "https://github.com/Maskkost93/kizyak-vpn-4.0/blob/main/kizyakbeta6BL.txt",
-    "https://github.com/Maskkost93/kizyak-vpn-4.0/blob/main/kizyakbeta6.txt",
-    "https://github.com/demian552010/NeVPN/blob/main/working_configs.txt",
-    "https://github.com/svinakraft-maker/FlareFeed/blob/main/public/fastest.txt",
-    "https://github.com/myominn062-svg/mk-studio-vpn-service/blob/main/mixed-protocol-chunks/MK-Studio-Mixed-Config-001.txt",
-    "https://github.com/miladtahanian/Config-Collector/blob/main/mixed_iran.txt",
-    "https://github.com/mmbcfgklmnm/-vpn-config-collector2/blob/main/configs/valid.txt",
-    "https://github.com/zinted-vpn/Zinted-VPN/blob/main/Zinted%20VPN.txt",
+    "https://raw.githubusercontent.com/willafrid/skorodum.vpn/main/cron-base64/combined.txt",
+    "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/main/kizyakbeta6BL.txt",
+    "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/main/kizyakbeta6.txt",
+    "https://raw.githubusercontent.com/demian552010/NeVPN/main/working_configs.txt",
+    "https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/fastest.txt",
+    "https://raw.githubusercontent.com/myominn062-svg/mk-studio-vpn-service/main/mixed-protocol-chunks/MK-Studio-Mixed-Config-001.txt",
+    "https://raw.githubusercontent.com/miladtahanian/Config-Collector/main/mixed_iran.txt",
+    "https://raw.githubusercontent.com/mmbcfgklmnm/-vpn-config-collector2/main/configs/valid.txt",
+    "https://raw.githubusercontent.com/zinted-vpn/Zinted-VPN/main/Zinted%20VPN.txt",
     "https://raw.githubusercontent.com/terik21/HiddifySubs-VlessKeys/refs/heads/main/WhiteKeys",
     "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
@@ -84,8 +88,6 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
     "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
-    "https://raw.githubusercontent.com/terik21/HiddifySubs-VlessKeys/refs/heads/main/WhiteKeys",
-    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt",
 ]
 
 XRAY_BIN = "./xray"
@@ -1141,16 +1143,38 @@ def detect_test_location():
 # ─────────────────────────────────────────────────────────────────────────────
 # ИСТОЧНИКИ
 # ─────────────────────────────────────────────────────────────────────────────
+# github.com/<owner>/<repo>/blob|raw/<branch>/<path>  ->  raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
+_GH_BLOB_RE = re.compile(r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$", re.I)
+_HTML_RE = re.compile(r"^\s*<(?:!doctype|html|head|body)", re.I)
+
+
+def normalize_source_url(url):
+    """Blob-страницы GitHub — это HTML с ОБРЕЗАННЫМ содержимым (большие файлы не
+    показываются целиком, спецсимволы экранированы как \\u0026). Переводим в raw."""
+    url = url.strip()
+    m = _GH_BLOB_RE.match(url)
+    if m:
+        owner, repo, rest = m.groups()
+        rest = rest.split('?', 1)[0].split('#', 1)[0]      # ?raw=true, ?plain=1 и т. п.
+        return f"https://raw.githubusercontent.com/{owner}/{repo}/{rest}"
+    return url
+
+
 def fetch_source(url):
+    real = normalize_source_url(url)
     try:
-        resp = SESSION.get(url, timeout=(3, 10))
+        resp = SESSION.get(real, timeout=(3, 10))
         if resp.status_code == 200:
-            links = extract_links(resp.text[:MAX_SOURCE_CHARS])
-            logger.info(f"📥 Источник {url[:48]}... -> {len(links)} ссылок")
+            text = resp.text[:MAX_SOURCE_CHARS]
+            if _HTML_RE.match(text[:400]):
+                logger.warning(f"⚠️ Источник {real[:60]}: пришла HTML-страница, а не файл — "
+                               f"ссылки будут неполными/битыми. Нужен прямой (raw) URL.")
+            links = extract_links(text)
+            logger.info(f"📥 Источник {real[:60]} -> {len(links)} ссылок")
             return links
-        logger.warning(f"⚠️ Источник {url[:48]}...: HTTP {resp.status_code}")
+        logger.warning(f"⚠️ Источник {real[:60]}: HTTP {resp.status_code}")
     except Exception as e:
-        logger.warning(f"⚠️ Ошибка источника {url[:40]}...: {e}")
+        logger.warning(f"⚠️ Ошибка источника {real[:60]}: {e}")
     return []
 
 
@@ -1237,27 +1261,34 @@ def main():
     prev_count = len(prev_servers)
 
     # ── Источники (параллельно, с лимитом ожидания) ──
-    logger.info(f"🌐 Загрузка источников ({', '.join(enabled_list)})...")
+    # Нормализуем ДО дедупликации: blob- и raw-варианты одного файла — один источник.
+    src_list = list(dict.fromkeys(normalize_source_url(u) for u in SOURCES if u and u.strip()))
+    logger.info(f"🌐 Загрузка источников: {len(src_list)} URL в списке ({', '.join(enabled_list)})...")
     all_configs, total_skipped = [], 0
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=10)
-    futures = [ex.submit(fetch_source, u) for u in dict.fromkeys(SOURCES)]
-    futures.append(ex.submit(search_github_configs))
-    done_set, not_done = concurrent.futures.wait(futures, timeout=SOURCE_WAIT_SEC)
+    fut_url = {ex.submit(fetch_source, u): u for u in src_list}
+    fut_url[ex.submit(search_github_configs)] = "<github-search>"
+    done_set, not_done = concurrent.futures.wait(list(fut_url), timeout=SOURCE_WAIT_SEC)
     for f in not_done:
         f.cancel()
-    slow = sum(1 for f in not_done if f.running())
+    src_ok = 0
     for f in done_set:
         try:
             servers, skipped = collect_parsed_servers(f.result())
             all_configs.extend(servers)
             total_skipped += skipped
+            if fut_url[f] != "<github-search>":
+                src_ok += 1
         except Exception as e:
-            logger.warning(f"⚠️ Ошибка обработки источника: {e}")
+            logger.warning(f"⚠️ Ошибка обработки источника {fut_url[f][:60]}: {e}")
     ex.shutdown(wait=False, cancel_futures=True)
-    if slow:
-        logger.warning(f"⏳ Источников не дождались (> {SOURCE_WAIT_SEC} сек): {slow}")
+    if not_done:
+        lost = [fut_url[f] for f in not_done]
+        logger.warning(f"⏳ Источников не дождались (> {SOURCE_WAIT_SEC} сек): {len(lost)} — "
+                       + ", ".join(u[:60] for u in lost[:10]))
+    logger.info(f"📥 Источников обработано: {src_ok}/{len(src_list)}")
     if total_skipped:
-        logger.info(f"🧹 Пропущено пустых/невалидных ссылок: {total_skipped}")
+        logger.info(f"🧹 Пропущено выключенных протоколов/невалидных ссылок: {total_skipped}")
 
     if os.path.exists(LOCAL_SOURCE_FILE):
         try:

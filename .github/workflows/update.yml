@@ -85,6 +85,20 @@ jobs:
           chmod +x ./xray
           ./xray version | head -n1
 
+      - name: ✅ Verify Xray binary
+        env:
+          EXPECTED_XRAY_VERSION: ${{ steps.xray.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x ./xray
+          ACTUAL="$(./xray version)"
+          printf '%s\n' "$ACTUAL" | head -n1
+          if ! grep -Fq "Xray ${EXPECTED_XRAY_VERSION}" <<< "$ACTUAL"; then
+            echo "❌ Ожидался Xray ${EXPECTED_XRAY_VERSION}, фактически: ${ACTUAL}" >&2
+            exit 1
+          fi
+          echo "✅ Проверена версия Xray ${EXPECTED_XRAY_VERSION}"
+
       - name: 🚀 Run VPN Scanner
         env:
           TOKEN: ${{ github.token }}                       # раньше не передавался -> GitHub Search всегда в rate-limit

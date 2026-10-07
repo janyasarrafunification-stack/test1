@@ -59,20 +59,11 @@ jobs:
 
       - name: 🔎 Resolve Xray version
         id: xray
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Зафиксируй версию через repo variable V1A_XRAY_VERSION, когда найдёшь ту,
-          # что точно работает с hysteria2 — latest иногда ломает схему конфига.
-          PINNED="${{ vars.V1A_XRAY_VERSION }}"
-          if [ -n "$PINNED" ]; then
-            VER="${PINNED#v}"
-          else
-            VER="$(gh api repos/XTLS/Xray-core/releases/latest --jq .tag_name)"
-            VER="${VER#v}"
-          fi
-          [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "❌ Не удалось определить версию Xray: '$VER'"; exit 1; }
+          # Зафиксирован выбранный релиз Xray; меняйте только при явном обновлении версии.
+          VER="26.9.30"
+          [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "❌ Некорректная версия Xray: '$VER'"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Xray version: $VER"
 

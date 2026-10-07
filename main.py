@@ -139,11 +139,12 @@ LINK_PROTO_NAMES = {
     "ss": "shadowsocks", "hysteria2": "hysteria2", "hy2": "hysteria2",
 }
 
-# Шифры Shadowsocks, которые умеет Xray. Остальные (rc4-md5, aes-*-cfb, chacha20 без
-# poly1305 и т. п.) Xray отвергает на старте — отсекаем на парсинге, а не Xray-тестом.
+# Методы Shadowsocks, которые принимает Xray 26.9.30. `none` и `plain` здесь
+# намеренно отсутствуют: этот Xray отвергает их как unknown cipher method.
 SS_SUPPORTED_METHODS = {
-    "aes-128-gcm", "aes-256-gcm", "chacha20-poly1305", "chacha20-ietf-poly1305",
-    "xchacha20-poly1305", "xchacha20-ietf-poly1305", "none", "plain",
+    "aes-128-gcm", "aead_aes_128_gcm", "aes-256-gcm", "aead_aes_256_gcm",
+    "chacha20-poly1305", "aead_chacha20_poly1305", "chacha20-ietf-poly1305",
+    "xchacha20-poly1305", "aead_xchacha20_poly1305", "xchacha20-ietf-poly1305",
     "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305",
 }
 
@@ -434,9 +435,15 @@ def safe_base64_decode(s):
 def _base_server(proto, ip_addr, port, uuid, original, **kw):
     d = {
         "protocol": proto, "ip": ip_addr, "port": int(port), "uuid": uuid,
-        "type": "tcp", "security": "none", "flow": "", "sni": "", "pbk": "", "sid": "", "spx": "/",
-        "path": "/", "host": "", "fp": "chrome", "serviceName": "", "mode": "", "authority": "",
-        "extra": "", "original": original, "country": "XX", "real_delay": 9999, "speed_mbps": 0.0,
+        "type": "tcp", "security": "none", "flow": "", "encryption": "none",
+        "sni": "", "alpn": "", "allowInsecure": False,
+        "pbk": "", "sid": "", "spx": "/", "mldsa65Verify": "",
+        "pinnedPeerCertSha256": "", "verifyPeerCertByName": "", "echConfigList": "",
+        "finalmask": "", "portHopping": False, "mport": "", "hopInterval": "",
+        "path": "/", "host": "", "fp": "chrome",
+        "serviceName": "", "mode": "", "authority": "", "extra": "", "obfs": "",
+        "plugin": "", "headerType": "", "seed": "", "mtu": "", "tti": "",
+        "original": original, "country": "XX", "real_delay": 9999, "speed_mbps": 0.0,
     }
     d.update(kw)
     return d
@@ -464,10 +471,47 @@ def _split_hostport(hp, default_port=None):
 
 
 def _norm_security(sec):
-    sec = (sec or 'none').lower()
-    if sec in ('none', 'tls', 'reality'):
-        return sec
-    return 'tls' if sec == 'xtls' else 'none'
+    # Не превращаем неизвестное/устаревшее или явно пустое значение в `none`:
+    # это меняет смысл ссылки и может запустить неверную, незашифрованную проверку.
+    return 'none' if sec is None else str(sec).strip().lower()
+
+
+_XRAY_TRANSPORT_ALIASES = {
+    'raw': 'tcp', 'tcp': 'tcp',
+    'ws': 'ws', 'websocket': 'ws',
+    'xhttp': 'xhttp', 'splithttp': 'xhttp',
+    'kcp': 'kcp', 'mkcp': 'kcp',
+    'grpc': 'grpc', 'httpupgrade': 'httpupgrade',
+}
+_XRAY_SUPPORTED_TRANSPORTS = frozenset(_XRAY_TRANSPORT_ALIASES.values())
+_XRAY_REALITY_TRANSPORTS = frozenset({'tcp', 'xhttp', 'grpc'})
+
+
+def _norm_transport(transport):
+    name = 'tcp' if transport is None else str(transport).strip().lower()
+    return _XRAY_TRANSPORT_ALIASES.get(name, name)
+
+
+def _is_truthy(value):
+    return str(value or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _parse_share_query(query):
+    """Стандарт Xray запрещает повторять один и тот же query-параметр."""
+    if not query:
+        return {}
+    values = parse_qs(query, keep_blank_values=True)
+    if any(len(items) != 1 for items in values.values()):
+        raise ValueError("duplicate query parameter")
+    return {key: items[0] for key, items in values.items()}
+
+
+def _parse_alpn(value):
+    if isinstance(value, (list, tuple)):
+        raw = ','.join(str(item) for item in value)
+    else:
+        raw = str(value or '')
+    return [item.strip() for item in raw.split(',') if item.strip()]
 
 
 def parse_vless(config_str):
@@ -479,15 +523,32 @@ def parse_vless(config_str):
             return None
         hp, _, query = rest.partition("?")
         host, port = _split_hostport(hp, default_port=443)
-        p = parse_qs(query) if query else {}
-        g = lambda k, d='': p.get(k, [d])[0]
+        p = _parse_share_query(query)
+        g = lambda k, d='': p.get(k, d)
         sec = _norm_security(g('security', 'none'))
-        flow = g('flow') if sec in ('tls', 'reality') else ''      # flow без TLS Xray не запустит
-        conf = _base_server("vless", host, port, unquote(userinfo), full,
-                            type=g('type', 'tcp') or 'tcp', security=sec, flow=flow,
-                            sni=g('sni'), pbk=g('pbk'), sid=g('sid'), spx=g('spx', '/'), path=g('path', '/'),
-                            host=g('host'), fp=g('fp', 'chrome') or 'chrome', serviceName=g('serviceName'),
-                            mode=g('mode'), authority=g('authority'), extra=g('extra'))
+        encryption = g('encryption', 'none').strip()
+        flow = g('flow').strip()
+        allow_insecure = _is_truthy(g('allowInsecure', g('allowinsecure', '0')))
+        sni = g('sni', host)
+        fp = g('fp', 'chrome')
+        path = g('path', '/')
+        alpn = g('alpn')
+        if ('sni' in p and not sni.strip()) or ('fp' in p and not fp.strip()) \
+                or ('path' in p and not path.strip()) or ('alpn' in p and not alpn.strip()):
+            return None
+        conf = _base_server(
+            "vless", host, port, unquote(userinfo), full,
+            type=_norm_transport(g('type', 'tcp')), security=sec,
+            flow=flow, encryption=encryption, sni=sni,
+            pbk=g('pbk') or g('publicKey') or g('password'),
+            sid=g('sid') or g('shortId'), spx=g('spx', g('spiderX', '/')),
+            mldsa65Verify=g('pqv', g('mldsa65Verify')),
+            pinnedPeerCertSha256=g('pcs'), verifyPeerCertByName=g('vcn'), echConfigList=g('ech'),
+            finalmask=g('fm'), path=path, host=g('host'), fp=fp,
+            serviceName=g('serviceName'), mode=g('mode'), authority=g('authority'),
+            extra=g('extra'), alpn=alpn, allowInsecure=allow_insecure,
+            headerType=g('headerType'), seed=g('seed'), mtu=g('mtu'), tti=g('tti'),
+        )
         if conf['security'] == 'reality' and not conf['pbk']:
             return None
         return conf
@@ -504,13 +565,26 @@ def parse_trojan(config_str):
             return None
         hp, _, query = rest.partition("?")
         host, port = _split_hostport(hp, default_port=443)
-        p = parse_qs(query) if query else {}
-        g = lambda k, d='': p.get(k, [d])[0]
-        return _base_server("trojan", host, port, unquote(password), full,
-                            type=g('type', 'tcp') or 'tcp', security=_norm_security(g('security', 'tls')),
-                            sni=g('sni'), path=g('path', '/'), host=g('host'), fp=g('fp', 'chrome') or 'chrome',
-                            serviceName=g('serviceName'), mode=g('mode'), authority=g('authority'),
-                            extra=g('extra'))
+        p = _parse_share_query(query)
+        g = lambda k, d='': p.get(k, d)
+        sni, fp, path, alpn = g('sni', host), g('fp', 'chrome'), g('path', '/'), g('alpn')
+        if ('sni' in p and not sni.strip()) or ('fp' in p and not fp.strip()) \
+                or ('path' in p and not path.strip()) or ('alpn' in p and not alpn.strip()):
+            return None
+        return _base_server(
+            "trojan", host, port, unquote(password), full,
+            type=_norm_transport(g('type', 'tcp')),
+            security=_norm_security(g('security', 'tls')), flow=g('flow').strip(),
+            sni=sni, pbk=g('pbk') or g('publicKey') or g('password'),
+            sid=g('sid') or g('shortId'), spx=g('spx', g('spiderX', '/')),
+            mldsa65Verify=g('pqv', g('mldsa65Verify')),
+            pinnedPeerCertSha256=g('pcs'), verifyPeerCertByName=g('vcn'), echConfigList=g('ech'),
+            finalmask=g('fm'), path=path, host=g('host'), fp=fp,
+            serviceName=g('serviceName'), mode=g('mode'), authority=g('authority'),
+            extra=g('extra'), alpn=alpn,
+            allowInsecure=_is_truthy(g('allowInsecure', g('allowinsecure', '0'))),
+            headerType=g('headerType'), seed=g('seed'), mtu=g('mtu'), tti=g('tti'),
+        )
     except Exception:
         return None
 
@@ -524,12 +598,14 @@ def parse_vmess(config_str):
             return None
         data = json.loads(json_str)
         return _base_server("vmess", data.get('add', ''), int(data.get('port', 443)), data.get('id', ''), full,
-                            type=data.get('net', 'tcp'),
-                            security="tls" if data.get('tls', '') == 'tls' else "none",
+                            type=_norm_transport(data.get('net', 'tcp')),
+                            security="tls" if str(data.get('tls', '')).lower() == 'tls' else "none",
                             sni=data.get('sni', data.get('host', '')), path=data.get('path', '/'),
-                            host=data.get('host', ''), fp=data.get('fp', 'chrome'),
+                            host=data.get('host', ''), fp=data.get('fp', 'chrome') or 'chrome',
                             serviceName=data.get('serviceName', ''), mode=data.get('mode', ''),
-                            authority=data.get('authority', ''), extra=data.get('extra', ''))
+                            authority=data.get('authority', ''), extra=data.get('extra', ''),
+                            alpn=data.get('alpn', ''),
+                            allowInsecure=_is_truthy(data.get('allowInsecure', data.get('allowinsecure', '0'))))
     except Exception:
         return None
 
@@ -537,7 +613,10 @@ def parse_vmess(config_str):
 def parse_shadowsocks(config_str):
     try:
         full = config_str.strip()
-        body = full.split('://', 1)[1].split('#', 1)[0].split('?', 1)[0]
+        body_with_query = full.split('://', 1)[1].split('#', 1)[0]
+        body, _, query = body_with_query.partition('?')
+        params = _parse_share_query(query)
+        plugin = params.get('plugin', '').strip()
         if '@' in body:
             userinfo, hostport = body.rsplit('@', 1)
             userinfo = unquote(userinfo)                 # aes-256-gcm%3Apass -> aes-256-gcm:pass
@@ -553,7 +632,8 @@ def parse_shadowsocks(config_str):
         if method not in SS_SUPPORTED_METHODS:
             return None                                  # Xray этот шифр не поднимет
         host, port = _split_hostport(hostport)
-        return _base_server("shadowsocks", host, port, password, full, method=method)
+        return _base_server("shadowsocks", host, port, password, full,
+                            method=method, plugin=plugin)
     except Exception:
         return None
 
@@ -566,17 +646,274 @@ def parse_hysteria2(config_str):
             return None
         password, rest = body.rsplit('@', 1)
         hostport, _, query = rest.partition('?')
-        p = parse_qs(query) if query else {}
-        g = lambda k, d='': p.get(k, [d])[0]
-        if HY2_SKIP_INSECURE and (g('insecure', '0').lower() in ('1', 'true')
-                                  or g('allowInsecure', '0').lower() in ('1', 'true')):
+        p = _parse_share_query(query)
+        g = lambda k, d='': p.get(k, d)
+        allow_insecure = _is_truthy(g('insecure')) or _is_truthy(g('allowInsecure'))
+        if HY2_SKIP_INSECURE and allow_insecure:
             return None
         host, port = _split_hostport(hostport, default_port=443)
+        sni, fp, alpn = g('sni', host), g('fp', 'chrome'), g('alpn')
+        if ('sni' in p and not sni.strip()) or ('fp' in p and not fp.strip()) \
+                or ('alpn' in p and not alpn.strip()):
+            return None
+        port_part = hostport.rsplit(':', 1)[-1]
+        port_hopping = bool(re.search(r'\d+(?:[-,]\d+)+$', port_part))
         return _base_server("hysteria2", host, port, unquote(password), full,
-                            type="udp", security="tls", sni=g('sni'), fp=g('fp', 'chrome') or 'chrome',
-                            authority=g('authority'), extra=g('obfs-password'))
+                            type="udp", security="tls", sni=sni, fp=fp, alpn=alpn,
+                            authority=g('authority'), obfs=g('obfs').strip().lower(),
+                            extra=g('obfs-password'), allowInsecure=allow_insecure,
+                            pinnedPeerCertSha256=g('pcs'), verifyPeerCertByName=g('vcn'),
+                            echConfigList=g('ech'), finalmask=g('fm'),
+                            mport=g('mport'), hopInterval=g('hopInterval'),
+                            portHopping=port_hopping)
     except Exception:
         return None
+
+
+_XRAY_REMOVED_TRANSPORTS = frozenset({'h2', 'http', 'h3', 'quic'})
+_VLESS_FLOWS = frozenset({'xtls-rprx-vision', 'xtls-rprx-vision-udp443'})
+
+
+def _decode_raw_url_base64(value):
+    if not isinstance(value, str) or not value or not re.fullmatch(r'[A-Za-z0-9_-]+', value):
+        return None
+    try:
+        padded = value + '=' * (-len(value) % 4)
+        return base64.b64decode(padded, altchars=b'-_', validate=True)
+    except Exception:
+        return None
+
+
+def _valid_vless_encryption(value):
+    """Проверяет поддерживаемый Xray outbound encryption-string до запуска Xray."""
+    value = 'none' if value is None else str(value).strip()
+    if not value:
+        return False
+    if value == 'none':
+        return True
+    parts = value.split('.')
+    if len(parts) < 4 or parts[0] != 'mlkem768x25519plus':
+        return False
+    if parts[1] not in ('native', 'xorpub', 'random') or parts[2] not in ('0rtt', '1rtt'):
+        return False
+    has_key = False
+    for part in parts[3:]:
+        if not part:
+            return False
+        if len(part) < 20:
+            if not re.fullmatch(r'(?:100|[0-9]{1,2})-[0-9]+-[0-9]+', part):
+                return False
+            continue
+        key = _decode_raw_url_base64(part)
+        if key is None or len(key) not in (32, 1184):
+            return False
+        has_key = True
+    return has_key
+
+
+def _valid_shadowsocks_2022_password(method, password):
+    key_length = 16 if method == '2022-blake3-aes-128-gcm' else 32
+    if method == '2022-blake3-chacha20-poly1305':
+        key_length = 32
+    for part in str(password or '').split(':'):
+        if not part:
+            return False
+        try:
+            decoded = base64.b64decode(part, validate=True)
+        except Exception:
+            decoded = part.encode('utf-8')
+        if len(decoded) != key_length:
+            return False
+    return True
+
+
+def _valid_pinned_peer_cert_sha256(value):
+    if not value:
+        return True
+    values = value.split(',') if isinstance(value, str) else value
+    for item in values:
+        item = str(item).strip()
+        if not item:
+            continue
+        compact = item.replace(':', '')
+        if not re.fullmatch(r'[0-9a-fA-F]{64}', compact):
+            return False
+    return True
+
+
+def _reality_field_issue(server):
+    pbk = _decode_raw_url_base64(str(server.get('pbk', '') or ''))
+    if pbk is None or len(pbk) != 32:
+        return 'reality-key-invalid'
+    sid = str(server.get('sid', '') or '')
+    if len(sid) > 16 or len(sid) % 2 or (sid and not re.fullmatch(r'[0-9a-fA-F]+', sid)):
+        return 'reality-shortid-invalid'
+    spx = str(server.get('spx', '/') or '/')
+    if not spx.startswith('/'):
+        return 'reality-spiderx-invalid'
+    pqv = str(server.get('mldsa65Verify', '') or '')
+    if pqv:
+        decoded = _decode_raw_url_base64(pqv)
+        if decoded is None or len(decoded) != 1952:
+            return 'reality-pqv-invalid'
+    return None
+
+
+def server_compatibility_issue(server):
+    """None если конфиг можно корректно представить Xray 26.9.30, иначе причина отсечения."""
+    proto = str(server.get('protocol', '')).strip().lower()
+    address = str(server.get('ip', '') or '').strip()
+    if not address:
+        return 'server-address-missing'
+    try:
+        port = int(server.get('port', 0))
+    except (TypeError, ValueError):
+        return 'server-port-invalid'
+    if not 0 < port < 65536:
+        return 'server-port-invalid'
+    if not str(server.get('uuid', '') or '').strip():
+        return 'server-credentials-missing'
+
+    if proto == 'shadowsocks':
+        method = str(server.get('method', '')).strip().lower()
+        if method not in SS_SUPPORTED_METHODS:
+            return 'ss-cipher'
+        if method.startswith('2022-') and not _valid_shadowsocks_2022_password(method, server.get('uuid', '')):
+            return 'ss-2022-key-invalid'
+        if server.get('plugin'):
+            return 'ss-plugin-unsupported'
+        return None
+
+    if proto == 'hysteria2':
+        if _is_truthy(server.get('allowInsecure')):
+            return 'hy2-insecure'
+        obfs = str(server.get('obfs', '') or '').strip().lower()
+        if obfs not in ('', 'none') or server.get('extra'):
+            # Hysteria2 Salamander obfs не представлена в Hysteria transport config Xray.
+            return 'hy2-obfs-unsupported'
+        if server.get('mport') or server.get('hopInterval') or server.get('portHopping'):
+            return 'hy2-port-hopping-unsupported'
+        if not _valid_pinned_peer_cert_sha256(server.get('pinnedPeerCertSha256', '')):
+            return 'tls-pcs-invalid'
+        if server.get('alpn') and any(not token.strip() for token in str(server['alpn']).split(',')):
+            return 'tls-alpn-invalid'
+        finalmask = server.get('finalmask', '')
+        if finalmask:
+            try:
+                finalmask_obj = json.loads(finalmask) if isinstance(finalmask, str) else finalmask
+                if not isinstance(finalmask_obj, dict):
+                    return 'finalmask-invalid'
+            except (TypeError, ValueError):
+                return 'finalmask-invalid'
+        return None
+
+    if proto not in ('vless', 'trojan', 'vmess'):
+        return None
+
+    transport = _norm_transport(server.get('type', 'tcp'))
+    if transport in _XRAY_REMOVED_TRANSPORTS:
+        return 'xray-transport-removed'
+    if transport not in _XRAY_SUPPORTED_TRANSPORTS:
+        return 'xray-transport-unsupported'
+
+    raw_security = server.get('security', 'none')
+    security = 'none' if raw_security is None else str(raw_security).strip().lower()
+    if security not in ('none', 'tls', 'reality'):
+        return 'xray-security-unsupported'
+    if security == 'tls' and _is_truthy(server.get('allowInsecure')):
+        # Xray 26.9.30 удалил allowInsecure; не отключаем проверку сертификата.
+        return 'tls-insecure-disallowed'
+
+    tls_options = ('alpn', 'pinnedPeerCertSha256', 'verifyPeerCertByName', 'echConfigList')
+    if security != 'tls' and any(server.get(key) for key in tls_options):
+        return 'tls-options-security-mismatch'
+    if security != 'reality' and server.get('mldsa65Verify'):
+        return 'reality-pqv-security-mismatch'
+    if security == 'reality':
+        if transport not in _XRAY_REALITY_TRANSPORTS:
+            return 'reality-transport-unsupported'
+        if proto == 'vmess':
+            return 'reality-protocol-unsupported'
+        reality_issue = _reality_field_issue(server)
+        if reality_issue:
+            return reality_issue
+        if server.get('alpn'):
+            return 'reality-alpn-unsupported'
+
+    if not _valid_pinned_peer_cert_sha256(server.get('pinnedPeerCertSha256', '')):
+        return 'tls-pcs-invalid'
+    if server.get('alpn'):
+        tokens = str(server['alpn']).split(',')
+        if any(not token.strip() for token in tokens):
+            return 'tls-alpn-invalid'
+
+    finalmask = server.get('finalmask', '')
+    if finalmask:
+        try:
+            finalmask_obj = json.loads(finalmask) if isinstance(finalmask, str) else finalmask
+            if not isinstance(finalmask_obj, dict):
+                return 'finalmask-invalid'
+        except (TypeError, ValueError):
+            return 'finalmask-invalid'
+
+    if transport == 'kcp':
+        if server.get('seed') or str(server.get('headerType', '')).strip().lower() not in ('', 'none'):
+            # В Xray 26.9.30 legacy KCP seed/header игнорируются; для них нужен FinalMask.
+            return 'kcp-legacy-header-unsupported'
+        for key, low, high in (('mtu', 576, 1460), ('tti', 10, 1000)):
+            value = server.get(key, '')
+            if value not in ('', None):
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    return 'kcp-parameter-invalid'
+                if not low <= number <= high:
+                    return 'kcp-parameter-invalid'
+    else:
+        if server.get('seed') or server.get('mtu') not in ('', None) or server.get('tti') not in ('', None):
+            return 'kcp-options-transport-mismatch'
+        header_type = str(server.get('headerType', '')).strip().lower()
+        if header_type not in ('', 'none'):
+            return 'transport-header-unsupported'
+
+    if transport == 'grpc':
+        mode = str(server.get('mode', '') or '').strip()
+        if mode not in ('', 'gun', 'multi'):
+            return 'grpc-mode-unsupported'
+    elif transport != 'xhttp' and server.get('mode'):
+        return 'transport-mode-unsupported'
+    if transport != 'xhttp' and server.get('extra'):
+        return 'transport-extra-unsupported'
+    if transport == 'xhttp' and server.get('extra'):
+        try:
+            extra_obj = json.loads(server['extra']) if isinstance(server['extra'], str) else server['extra']
+            if not isinstance(extra_obj, dict):
+                return 'xhttp-extra-invalid'
+        except (TypeError, ValueError):
+            return 'xhttp-extra-invalid'
+
+    if proto == 'vless':
+        raw_encryption = server.get('encryption', 'none')
+        encryption = 'none' if raw_encryption is None else str(raw_encryption).strip()
+        if not _valid_vless_encryption(encryption):
+            return 'vless-encryption-invalid'
+        if security == 'none' and encryption == 'none':
+            # Для публичного сканера не запускаем незашифрованный VLESS.
+            return 'vless-plaintext-disallowed'
+        flow = str(server.get('flow', '') or '').strip()
+        if flow:
+            if flow not in _VLESS_FLOWS:
+                return 'vless-flow-unsupported'
+            if encryption == 'none' and not (security in ('tls', 'reality') and transport == 'tcp'):
+                return 'vless-flow-incompatible'
+
+    if proto == 'trojan':
+        if server.get('flow'):
+            return 'trojan-flow-unsupported'
+        if security == 'none':
+            return 'trojan-plaintext-disallowed'
+
+    return None
 
 
 _PARSERS = {
@@ -591,13 +928,36 @@ def parse_link_into_server(link):
         proto = LINK_PROTO_NAMES.get(link.split('://', 1)[0].lower())
         if proto not in ENABLED_PROTOCOLS:
             return None
-        return _PARSERS[proto](link)
+        server = _PARSERS[proto](link)
+        if not server or server_compatibility_issue(server):
+            return None
+        return server
     except Exception:
         return None
 
 
-_HY2_INSECURE_RE = re.compile(r'(?:^|[?&])(?:insecure|allowInsecure)=(?:1|true)\b', re.I)
 _SS_METHOD_RE = re.compile(r'^ss://([^@:/?#]+):', re.I)
+
+
+def _raw_link_query(link):
+    if '?' not in link:
+        return {}
+    try:
+        return parse_qs(link.split('?', 1)[1].split('#', 1)[0], keep_blank_values=True)
+    except Exception:
+        return {}
+
+
+def _link_has_truthy_query(link, keys):
+    query = _raw_link_query(link)
+    return any(_is_truthy(value) for key in keys for value in query.get(key, []))
+
+
+def _vless_reality_link_missing_key(link):
+    query = _raw_link_query(link)
+    if query.get('security', [''])[0].strip().lower() != 'reality':
+        return False
+    return not any(query.get(key, [''])[0].strip() for key in ('pbk', 'publicKey', 'password'))
 
 
 def _ss_method_of(link):
@@ -645,11 +1005,16 @@ def collect_parsed_servers(links, stats=None, bad_samples=None):
             continue
         srv = _PARSERS[proto](link)
         if srv:
+            issue = server_compatibility_issue(srv)
+            if issue:
+                st[f'off:{issue}'] += 1
+                continue
             servers.append(srv)
             st[f'ok:{proto}'] += 1
             continue
         # Отделяем намеренные отсевы от реального брака
-        if proto == 'hysteria2' and HY2_SKIP_INSECURE and _HY2_INSECURE_RE.search(link):
+        if proto == 'hysteria2' and HY2_SKIP_INSECURE \
+                and _link_has_truthy_query(link, ('insecure', 'allowInsecure')):
             st['off:hy2-insecure'] += 1
         elif proto == 'shadowsocks' and (m := _SS_METHOD_RE.match(unquote(link))) \
                 and m.group(1).lower() not in SS_SUPPORTED_METHODS:
@@ -657,7 +1022,7 @@ def collect_parsed_servers(links, stats=None, bad_samples=None):
         elif proto == 'shadowsocks' and (m2 := _ss_method_of(link)) \
                 and m2 not in SS_SUPPORTED_METHODS:
             st['off:ss-cipher'] += 1
-        elif proto == 'vless' and 'security=reality' in link and 'pbk=' not in link:
+        elif proto == 'vless' and _vless_reality_link_missing_key(link):
             st['off:reality-no-pbk'] += 1
         else:
             st[f'bad:{proto}'] += 1
@@ -715,16 +1080,9 @@ def load_previous_subscription():
         with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
             token = f.read().strip()
         raw = open_subscription_text(token)
+        parsed, parse_stats = collect_parsed_servers(raw.splitlines())
         seen = set()
-        raw_count = 0
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            srv = parse_link_into_server(line)
-            if not srv:
-                continue
-            raw_count += 1
+        for srv in parsed:
             nid = node_id_of(srv)
             if nid in seen:
                 continue
@@ -732,7 +1090,13 @@ def load_previous_subscription():
             extract_ping_speed_from_link(srv)
             srv['from_prev'] = True
             servers.append(srv)
-        logger.info(f"📂 Прошлый subscription: {len(servers)} уникальных серверов (строк: {raw_count}).")
+        skipped = sorted((key.split(':', 1)[1], value) for key, value in parse_stats.items()
+                         if key.startswith('off:'))
+        skipped_text = ", ".join(f"{reason}={count}" for reason, count in skipped)
+        logger.info(f"📂 Прошлый subscription: {len(servers)} уникальных серверов "
+                    f"(строк распознано: {len(parsed)}).")
+        if skipped_text:
+            logger.info("ℹ️ Старые несовместимые/отключённые ссылки пропущены: " + skipped_text)
     except Exception as e:
         logger.warning(f"⚠️ Не удалось прочитать прошлый subscription: {e}")
     return servers
@@ -745,17 +1109,8 @@ def get_latest_xray_version():
     pinned = os.getenv("V1A_XRAY_VERSION", "").strip()
     if pinned:
         return pinned.lstrip("v")
-    try:
-        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
-        r = SESSION.get("https://api.github.com/repos/XTLS/Xray-core/releases/latest", headers=headers, timeout=8)
-        if r.status_code == 200:
-            tag = r.json().get("tag_name", "")
-            if tag:
-                return tag.lstrip("v")
-    except Exception:
-        pass
-    logger.warning("⚠️ GitHub API недоступен — использую резервную версию Xray 26.3.27")
-    return "26.3.27"
+    # Зафиксирован выбранный релиз Xray; меняйте только при явном обновлении версии.
+    return "26.9.30"
 
 
 def install_xray_core():
@@ -897,97 +1252,121 @@ def _wrap_config(outbound, local_port):
             "outbounds": [outbound]}
 
 
-def generate_xray_config(server, local_port):
-    xray_proto = "hysteria" if server['protocol'] == 'hysteria2' else server['protocol']
-    outbound = {"protocol": xray_proto, "settings": {},
-                "streamSettings": {"network": server['type'], "security": server['security']}}
+def _xray_tls_settings(server):
+    settings = {
+        "serverName": server.get('sni') or server.get('ip', ''),
+        "fingerprint": server.get('fp') or 'chrome',
+    }
+    alpn = _parse_alpn(server.get('alpn', ''))
+    if alpn:
+        settings['alpn'] = alpn
+    for key in ('pinnedPeerCertSha256', 'verifyPeerCertByName', 'echConfigList'):
+        if server.get(key):
+            settings[key] = server[key]
+    return settings
 
-    if server['protocol'] == 'vless':
-        user = {"id": server['uuid'], "encryption": "none"}
-        flow = server.get('flow', '')
-        if flow and server['type'] in ('tcp', 'raw', 'h2', 'http') and server['security'] in ('tls', 'reality'):
-            user['flow'] = flow
+
+def generate_xray_config(server, local_port):
+    issue = server_compatibility_issue(server)
+    if issue:
+        raise ValueError(f"Unsupported Xray 26.9.30 configuration: {issue}")
+
+    proto = server['protocol']
+    transport = _norm_transport(server.get('type', 'tcp'))
+    security = str(server.get('security', 'none') or 'none').strip().lower()
+    xray_proto = "hysteria" if proto == 'hysteria2' else proto
+    outbound = {"protocol": xray_proto, "settings": {},
+                "streamSettings": {"network": transport, "security": security}}
+
+    if proto == 'vless':
+        user = {"id": server['uuid'], "encryption": server.get('encryption', 'none')}
+        if server.get('flow'):
+            user['flow'] = server['flow']
         outbound['settings'] = {"vnext": [{"address": server['ip'], "port": server['port'], "users": [user]}]}
-    elif server['protocol'] == 'trojan':
+    elif proto == 'trojan':
         outbound['settings'] = {"servers": [{"address": server['ip'], "port": server['port'], "password": server['uuid']}]}
-    elif server['protocol'] == 'shadowsocks':
+    elif proto == 'shadowsocks':
         outbound['settings'] = {"servers": [{"address": server['ip'], "port": server['port'],
                                              "method": server.get('method', 'aes-256-gcm'), "password": server['uuid']}]}
-    elif server['protocol'] == 'hysteria2':
+    elif proto == 'hysteria2':
         outbound['settings'] = {"version": 2, "address": server['ip'], "port": server['port']}
-    else:  # vmess
+    else:  # vmess (выключен в ENABLED_PROTOCOLS, оставлен для совместимости)
         outbound['settings'] = {"vnext": [{"address": server['ip'], "port": server['port'],
                                            "users": [{"id": server['uuid'], "alterId": 0, "security": "auto"}]}]}
 
-    path = server.get('path', '/') or '/'
-    if not path.startswith('/'):
+    path = server.get('path', '/')
+    if path and not path.startswith('/'):
         path = '/' + path
-    ss = outbound["streamSettings"]
-    t = server['type']
+    ss = outbound['streamSettings']
 
-    if server['protocol'] == 'hysteria2':
-        outbound['streamSettings'] = {
+    if proto == 'hysteria2':
+        hy2_stream = {
             "network": "hysteria", "security": "tls",
-            "tlsSettings": {"serverName": server.get('sni') or server['ip'], "fingerprint": server.get('fp', 'chrome')},
+            "tlsSettings": _xray_tls_settings(server),
             "hysteriaSettings": {"version": 2, "auth": server['uuid'], "udpIdleTimeout": 60},
         }
-        return _wrap_config(outbound, local_port)
-    elif t == 'ws':
-        ws = {"path": path}
+        outbound['streamSettings'] = hy2_stream
+    elif transport == 'ws':
+        ws = {"path": path or '/'}
         if server.get('host'):
-            ws["headers"] = {"Host": server['host']}
-        ss["wsSettings"] = ws
-    elif t == 'grpc':
-        g = {"serviceName": server.get('serviceName', '')}
-        if server.get('authority'):
-            g["authority"] = server['authority']
-        ss["grpcSettings"] = g
-    elif t in ('xhttp', 'splithttp'):
-        x = {"path": path}
+            ws['host'] = server['host']
+        ss['wsSettings'] = ws
+    elif transport == 'grpc':
+        mode = str(server.get('mode', '') or '').strip()
+        grpc = {"serviceName": server.get('serviceName', ''), "multiMode": mode == 'multi'}
+        authority = server.get('authority') or server.get('host')
+        if authority:
+            grpc['authority'] = authority
+        ss['grpcSettings'] = grpc
+    elif transport == 'xhttp':
+        xhttp = {"path": path or '/'}
         if server.get('host'):
-            x["host"] = server['host']
+            xhttp['host'] = server['host']
         if server.get('mode'):
-            x["mode"] = server['mode']
-        extra_str = server.get('extra', '')
-        if extra_str:
-            extra_dict = {}
-            if extra_str.startswith('{') and extra_str.endswith('}'):
-                try:
-                    extra_dict = json.loads(extra_str)
-                except Exception:
-                    for pair in extra_str[1:-1].split(','):
-                        if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            extra_dict[k.strip()] = v.strip()
-            elif '=' in extra_str:
-                for pair in extra_str.split('&'):
-                    if '=' in pair:
-                        k, v = pair.split('=', 1)
-                        extra_dict[k.strip()] = v.strip()
-            if isinstance(extra_dict, dict) and extra_dict:
-                x["extra"] = extra_dict
-        ss["network"] = "xhttp"
-        ss["xhttpSettings"] = x
-    elif t == 'httpupgrade':
-        h = {"path": path}
+            xhttp['mode'] = server['mode']
+        extra = server.get('extra', '')
+        if extra:
+            try:
+                extra_obj = json.loads(extra) if isinstance(extra, str) else extra
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Invalid XHTTP extra JSON") from exc
+            if not isinstance(extra_obj, dict):
+                raise ValueError("XHTTP extra must be a JSON object")
+            xhttp['extra'] = extra_obj
+        ss['xhttpSettings'] = xhttp
+    elif transport == 'httpupgrade':
+        httpupgrade = {"path": path or '/'}
         if server.get('host'):
-            h["host"] = server['host']
-        ss["httpupgradeSettings"] = h
-    elif t in ('h2', 'http'):
-        h = {"path": path}
-        if server.get('host'):
-            h["host"] = [server['host']]
-        ss["network"] = "h2"
-        ss["httpSettings"] = h
+            httpupgrade['host'] = server['host']
+        ss['httpupgradeSettings'] = httpupgrade
+    elif transport == 'kcp':
+        kcp = {}
+        if server.get('mtu') not in ('', None):
+            kcp['mtu'] = int(server['mtu'])
+        if server.get('tti') not in ('', None):
+            kcp['tti'] = int(server['tti'])
+        ss['kcpSettings'] = kcp
 
-    tls_set = {"serverName": server.get('sni', ''), "fingerprint": server.get('fp', 'chrome')}
-    if server['security'] == 'tls':
-        ss["tlsSettings"] = tls_set
-    elif server['security'] == 'reality':
-        r = dict(tls_set)
-        r.update({"show": False, "publicKey": server.get('pbk', ''),
-                  "shortId": server.get('sid', ''), "spiderX": server.get('spx', '/')})
-        ss["realitySettings"] = r
+    if proto == 'hysteria2':
+        pass  # TLS settings were attached with the Hysteria transport above.
+    elif security == 'tls':
+        ss['tlsSettings'] = _xray_tls_settings(server)
+    elif security == 'reality':
+        reality = {
+            "show": False,
+            "fingerprint": server.get('fp') or 'chrome',
+            "serverName": server.get('sni') or server.get('ip', ''),
+            "password": server.get('pbk', ''),
+            "shortId": server.get('sid', ''),
+            "spiderX": server.get('spx') or '/',
+        }
+        if server.get('mldsa65Verify'):
+            reality['mldsa65Verify'] = server['mldsa65Verify']
+        ss['realitySettings'] = reality
+
+    finalmask = server.get('finalmask', '')
+    if finalmask:
+        ss['finalmask'] = json.loads(finalmask) if isinstance(finalmask, str) else finalmask
     return _wrap_config(outbound, local_port)
 
 
@@ -1014,10 +1393,19 @@ class XrayTunnel:
         self.proc = None
         self.ready = False
         self.error = ""
+        self.config_error = False
 
     def __enter__(self):
         self.port = get_free_port()
-        cfg = generate_xray_config(self.server, self.port)
+        try:
+            cfg = generate_xray_config(self.server, self.port)
+        except (ValueError, TypeError, KeyError) as exc:
+            self.config_error = True
+            self.error = str(exc)
+            if self.port is not None:
+                release_port(self.port)
+                self.port = None
+            return self
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
             json.dump(cfg, tmp)
             self.path = tmp.name
@@ -1150,6 +1538,8 @@ def deep_verify(server):
     """STAGE 1. -> (server, None) | (None, reason)."""
     try:
         with XrayTunnel(server) as tun:
+            if tun.config_error:
+                return None, 'unsupported_config'
             if not tun.ready:
                 _note_xray_error(tun.error)
                 return None, 'xray_start'
@@ -1189,6 +1579,8 @@ def measure_node_stats(server, check_speed=True):
     try:
         tcp_ping = get_accurate_ping(server['ip'], server['port'], attempts=3)
         with XrayTunnel(server) as tun:
+            if tun.config_error:
+                return server, False
             if not tun.ready:
                 _note_xray_error(tun.error)
                 return server, False
@@ -1358,7 +1750,18 @@ def main():
     history = load_history()
 
     # ── Старые серверы ──
-    prev_servers = [s for s in load_previous_subscription() if s['protocol'] not in unsupported]
+    prev_servers, prev_incompatible = [], collections.Counter()
+    for server in load_previous_subscription():
+        if server.get('protocol') in unsupported:
+            continue
+        issue = server_compatibility_issue(server)
+        if issue:
+            prev_incompatible[issue] += 1
+            continue
+        prev_servers.append(server)
+    if prev_incompatible:
+        reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(prev_incompatible.items()))
+        logger.info("ℹ️ Старые узлы с несовместимой конфигурацией Xray пропущены: " + reasons)
     prev_count = len(prev_servers)
 
     # ── Источники (параллельно, с лимитом ожидания) ──
@@ -1488,7 +1891,7 @@ def main():
                 logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP: {res['real_delay']}ms | {res['speed_mbps']} Mbps")
             else:
                 fail_stats[reason] = fail_stats.get(reason, 0) + 1
-                if s.get('from_prev'):
+                if s.get('from_prev') and reason != 'unsupported_config':
                     failed_prev.append(s)
             if done % 200 == 0 or done == len(to_test):
                 el = time.time() - t1

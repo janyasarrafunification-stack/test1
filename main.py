@@ -1125,9 +1125,11 @@ def install_xray_core():
                 logger.warning(f"⚠️ Ошибка выдачи прав Xray: {e}")
         try:
             result = subprocess.run([XRAY_BIN, "version"], capture_output=True, text=True, timeout=2)
-            if desired_version in result.stdout:
+            if result.returncode == 0 and desired_version in result.stdout:
+                logger.info(f"✅ Xray {desired_version} уже установлен.")
                 return
-            logger.info(f"🔄 Xray {result.stdout.split()[1] if result.stdout else '?'} -> {desired_version}")
+            actual = result.stdout.split()[1] if result.stdout.split() else '?'
+            logger.info(f"🔄 Xray {actual} -> {desired_version}")
         except Exception:
             logger.info("🔄 Xray неисправен — переустанавливаем")
 
@@ -1136,19 +1138,26 @@ def install_xray_core():
     try:
         r = SESSION.get(url, timeout=60)
         if r.status_code != 200:
-            logger.error(f"❌ Ошибка скачивания: HTTP {r.status_code} (оставляю текущий бинарник, если он есть)")
-            return
+            raise RuntimeError(f"ошибка скачивания: HTTP {r.status_code}")
         with zipfile.ZipFile(io.BytesIO(r.content)) as z:
             if 'xray' not in z.namelist():
-                logger.error("❌ В архиве нет файла xray!")
-                return
+                raise RuntimeError("в архиве нет файла xray")
             with z.open('xray') as zf, open(XRAY_BIN + ".new", 'wb') as f:
                 f.write(zf.read())
         os.chmod(XRAY_BIN + ".new", 0o755)
         os.replace(XRAY_BIN + ".new", XRAY_BIN)
-        logger.info("✅ Xray установлен успешно.")
+        result = subprocess.run([XRAY_BIN, "version"], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0 or desired_version not in result.stdout:
+            actual = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "нет вывода"
+            raise RuntimeError(f"ожидался Xray {desired_version}, получено: {actual}")
+        logger.info(f"✅ Xray {desired_version} установлен и проверен.")
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка установки Xray: {e}")
+        try:
+            os.remove(XRAY_BIN + ".new")
+        except OSError:
+            pass
+        logger.error(f"❌ Не удалось установить/проверить Xray {desired_version}: {e}")
+        raise RuntimeError(f"Xray {desired_version} недоступен; тестирование прекращено") from e
 
 
 _XRAY_PROTO_OK = {}

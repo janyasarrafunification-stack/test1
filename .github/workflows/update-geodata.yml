@@ -1,0 +1,69 @@
+name: Weekly Xray geodata update
+
+on:
+  schedule:
+    # Weekly on Monday at 03:17 UTC (GitHub may delay scheduled runs).
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-xray-geodata
+  cancel-in-progress: false
+
+jobs:
+  update-geodata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download and verify GeoIP and GeoSite
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          # Verify both downloads before replacing either tracked file.
+          for file in geoip.dat geosite.dat; do
+            curl -fsSL --retry 3 --retry-all-errors "$base/$file" -o "$tmp/$file"
+            curl -fsSL --retry 3 --retry-all-errors "$base/$file.sha256sum" -o "$tmp/$file.sha256sum"
+            expected="$(awk 'NR == 1 { print tolower($1) }' "$tmp/$file.sha256sum")"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid SHA-256 sidecar for $file" >&2; exit 1; }
+            actual="$(sha256sum "$tmp/$file" | awk '{print $1}')"
+            [[ "$actual" == "$expected" ]] || { echo "SHA-256 mismatch for $file" >&2; exit 1; }
+            echo "Verified $file ($actual)"
+          done
+
+          install -m 0644 "$tmp/geoip.dat" geoip.dat
+          install -m 0644 "$tmp/geosite.dat" geosite.dat
+
+      - name: Commit updated files
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add geoip.dat geosite.dat
+          git diff --cached --quiet && { echo "No geodata changes"; exit 0; }
+          git commit -q -m "chore: weekly Xray geodata update"
+
+          # Retry if another workflow updates main while this job is running.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "Geodata update pushed"
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              git fetch origin "${GITHUB_REF_NAME}"
+              git rebase -X theirs "origin/${GITHUB_REF_NAME}" || { git rebase --abort; exit 1; }
+            fi
+          done
+          echo "Failed to push geodata update after retries" >&2
+          exit 1

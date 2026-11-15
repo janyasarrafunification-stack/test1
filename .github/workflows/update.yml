@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           # Зафиксирован выбранный релиз Xray; меняйте только при явном обновлении версии.
-          VER="26.9.30"
+          VER="26.11.9"
           [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "❌ Некорректная версия Xray: '$VER'"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Xray version: $VER"

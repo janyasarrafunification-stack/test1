@@ -192,6 +192,10 @@ XRAY_START_TIMEOUT = 3.0
 PING_ATTEMPTS = int(os.getenv("V1A_PING_ATTEMPTS", "2"))
 SOURCE_WAIT_SEC = int(os.getenv("V1A_SOURCE_WAIT", "40"))
 YT_CHECK_ENABLED = os.getenv("V1A_YT_CHECK", "1") == "1"
+# Запасная проверка выхода: запускается только если Cloudflare Trace недоступен.
+GOOGLE_204_FALLBACK_ENABLED = os.getenv("V1A_GOOGLE_204_FALLBACK", "1") == "1"
+GOOGLE_204_URL = "https://www.google.com/generate_204"
+GOOGLE_204_TIMEOUT = min(REAL_TEST_TIMEOUT, 2.0)
 
 # --- Бюджет времени всего прогона ---
 RUN_BUDGET_SEC = int(os.getenv("V1A_RUN_BUDGET_SEC", "1500"))       # 25 мин
@@ -1539,6 +1543,48 @@ def cf_trace(sess, proxies, attempts=1):
     return None, None
 
 
+def google_generate_204(sess, proxies):
+    """Короткий запасной probe: принимаем только точный HTTP 204, без редиректов."""
+    if not GOOGLE_204_FALLBACK_ENABLED:
+        return None
+    response = None
+    try:
+        t0 = time.perf_counter()
+        response = sess.get(
+            GOOGLE_204_URL, proxies=proxies, timeout=GOOGLE_204_TIMEOUT,
+            allow_redirects=False,
+        )
+        if response.status_code == 204:
+            return int((time.perf_counter() - t0) * 1000)
+    except Exception:
+        pass
+    finally:
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+    return None
+
+
+def probe_exit(sess, proxies, attempts=1, previous_country=None):
+    """Сначала Cloudflare Trace; при его сбое — Google 204. Возвращает latency, country, source."""
+    latency, country = cf_trace(sess, proxies, attempts=attempts)
+    if latency is not None:
+        return latency, country, 'cloudflare'
+
+    google_latency = google_generate_204(sess, proxies)
+    if google_latency is None:
+        return None, None, None
+
+    # У Google generate_204 нет поля страны; сохраняем прежнюю метку, если она известна.
+    if previous_country in (None, '', 'XX'):
+        country = 'XX'
+    else:
+        country = previous_country
+    return google_latency, country, 'google-204'
+
+
 def measure_download_speed(sess, proxies):
     with _speed_semaphore:
         for url in SPEED_TEST_URLS:
@@ -1578,9 +1624,11 @@ def deep_verify(server):
                 _note_xray_error(tun.error)
                 return None, 'xray_start'
             with proxy_session() as ps:
-                latency, country = cf_trace(ps, tun.proxies)
+                latency, country, probe_source = probe_exit(ps, tun.proxies)
                 if latency is None:
                     return None, 'trace_http'
+                # Не меняем существующее требование: при включённой проверке YouTube
+                # туннель всё ещё должен получить от generate_204 именно HTTP 204.
                 if YT_CHECK_ENABLED:
                     try:
                         yt = ps.get("https://www.youtube.com/generate_204", proxies=tun.proxies, timeout=3.0)
@@ -1591,6 +1639,7 @@ def deep_verify(server):
                 speed = measure_download_speed(ps, tun.proxies)
         server['real_delay'] = latency
         server['country'] = country
+        server['probe_source'] = probe_source
         server['speed_mbps'] = speed
         return server, None
     except Exception:
@@ -1619,11 +1668,14 @@ def measure_node_stats(server, check_speed=True):
                 _note_xray_error(tun.error)
                 return server, False
             with proxy_session() as ps:
-                _, country = cf_trace(ps, tun.proxies, attempts=2)
+                _, country, probe_source = probe_exit(
+                    ps, tun.proxies, attempts=2, previous_country=server.get('country')
+                )
                 if country is None:
                     return server, False
                 speed = measure_download_speed(ps, tun.proxies) if check_speed else 0.0
         server['country'] = country
+        server['probe_source'] = probe_source
         if tcp_ping != 9999:
             server['real_delay'] = tcp_ping
         if check_speed and speed > 0:
@@ -1904,6 +1956,7 @@ def main():
     deadline = t1 + stage1_budget
     tested, failed_prev, untested_prev = [], [], []
     fail_stats = {}
+    google_fallback_stage1 = 0
     processed = set()
     timed_out = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -1922,7 +1975,10 @@ def main():
                 res, reason = None, 'exception'
             if res:
                 tested.append(res)
-                logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP: {res['real_delay']}ms | {res['speed_mbps']} Mbps")
+                if res.get('probe_source') == 'google-204':
+                    google_fallback_stage1 += 1
+                probe_note = " | Google 204 fallback" if res.get('probe_source') == 'google-204' else ""
+                logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP: {res['real_delay']}ms | {res['speed_mbps']} Mbps{probe_note}")
             else:
                 fail_stats[reason] = fail_stats.get(reason, 0) + 1
                 if s.get('from_prev') and reason != 'unsupported_config':
@@ -1938,6 +1994,7 @@ def main():
                 untested_prev.append(s)
 
     logger.info(f"📊 ЭТАП 1: {len(to_test)} кандидатов за {time.time() - t1:.0f} сек | прошло {len(tested)} | "
+                f"Google 204 fallback: {google_fallback_stage1} | "
                 f"отсев: {', '.join(f'{k}={v}' for k, v in sorted(fail_stats.items())) or '—'}")
     if _XRAY_START_ERRORS:
         logger.info("   Причины xray_start (топ-5, из stderr Xray):")
@@ -1986,6 +2043,7 @@ def main():
     t2 = time.time()
     verified = list(passthrough)
     dropped_new, grace2 = 0, 0
+    google_fallback_stage2 = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=STAGE2_WORKERS) as ex:
         fm = {ex.submit(measure_node_stats, s, check_speed=not s.get('skip_speed', False)): s for s in to_verify}
         done = 0
@@ -2004,10 +2062,14 @@ def main():
                     dropped_new += 1
                     continue
             verified.append(s)
+            if s.get('probe_source') == 'google-204':
+                google_fallback_stage2 += 1
             disp = COUNTRIES_RU.get(s['country'], s['country'])
+            probe_note = " (Google 204 fallback)" if s.get('probe_source') == 'google-204' else ""
             logger.info(f"   [{done}/{len(to_verify)}] {disp} -> {s.get('real_delay', 0)}ms | {s.get('speed_mbps', 0.0)} Mbps"
-                        + (" (грейс)" if s.get('grace') else ""))
-    logger.info(f"📊 ЭТАП 2: {time.time() - t2:.0f} сек | отсеяно {dropped_new}, в грейс {grace2}")
+                        + (" (грейс)" if s.get('grace') else "") + probe_note)
+    logger.info(f"📊 ЭТАП 2: {time.time() - t2:.0f} сек | отсеяно {dropped_new}, в грейс {grace2} | "
+                f"Google 204 fallback: {google_fallback_stage2}")
 
     verified.sort(key=lambda x: (0 if x.get('from_prev') else 1, x.get('real_delay', 9999), -x.get('score', 0)))
 

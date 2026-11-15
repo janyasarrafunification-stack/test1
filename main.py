@@ -125,9 +125,9 @@ LOCAL_SOURCE_FILE = 'my_source'
 META_FILE = 'run_meta.json'           # nodes/prev_nodes/bytes — для sanity-check в воркфлоу
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🔐 КЛЮЧИ. В GitHub Actions задаются через Secrets (env V1A_SUB_KEY / V1A_HISTORY_KEY).
-# Дефолты ниже — ТОЛЬКО для локального запуска. В публичном репо ключ не хранить:
-# зашей V1A_SUB_KEY в клиентскую программу, в репо оставь секрет.
+# 🔐 КЛЮЧИ. GitHub Actions передаёт их из Secrets через env.
+# Не хранить реальные значения в Python или YAML; для локального запуска
+# задайте V1A_SUB_KEY и V1A_HISTORY_KEY в окружении вручную.
 # ─────────────────────────────────────────────────────────────────────────────
 SUB_KEY = os.getenv("V1A_SUB_KEY", "").strip()
 HISTORY_KEY = os.getenv("V1A_HISTORY_KEY", "").strip()
@@ -1829,8 +1829,16 @@ def _fmt_stats(stats, prefix):
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     logger.info("🚀 START: V1A Smart Selector")
-    if SUB_KEY == "V1A-Sub-Default-CHANGE-ME":
-        logger.warning("⚠️ V1A_SUB_KEY не задан — используется дефолтный ключ (только для локальной отладки!)")
+    missing = [
+        name for name, value in (
+            ("V1A_SUB_KEY", SUB_KEY),
+            ("V1A_HISTORY_KEY", HISTORY_KEY),
+        )
+        if not value
+    ]
+    if missing:
+        logger.error("❌ Не заданы обязательные GitHub Actions Secrets: " + ", ".join(missing))
+        sys.exit(1)
     if PUBLISH_TARGET:
         logger.info(f"📤 Режим публикации: отдельный репозиторий {PUBLISH_TARGET['repo']}")
 

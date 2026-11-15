@@ -129,8 +129,8 @@ META_FILE = 'run_meta.json'           # nodes/prev_nodes/bytes — для sanity
 # Дефолты ниже — ТОЛЬКО для локального запуска. В публичном репо ключ не хранить:
 # зашей V1A_SUB_KEY в клиентскую программу, в репо оставь секрет.
 # ─────────────────────────────────────────────────────────────────────────────
-SUB_KEY = os.getenv("V1A_SUB_KEY", "V1A-Sub-Default-CHANGE-ME")
-HISTORY_KEY = os.getenv("V1A_HISTORY_KEY", "V1A-History-Secret-2026")
+SUB_KEY = os.getenv("V1A_SUB_KEY", "").strip()
+HISTORY_KEY = os.getenv("V1A_HISTORY_KEY", "").strip()
 SEAL_MAGIC = "V1A2."                  # маркер нового формата контейнера
 
 # Старый формат подписки (читается один раз при миграции, потом можно удалить)

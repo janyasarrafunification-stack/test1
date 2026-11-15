@@ -89,6 +89,31 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
     "https://gist.githubusercontent.com/shirinyannver31-ux/6b16a88d07db0830b49ab8b02536c3b6/raw/VedaVPN.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
+    "https://github.com/MohammadBahemmat/V2ray-Collector/blob/main/servers/vless_servers.txt",
+    "https://github.com/MohammadBahemmat/V2ray-Collector/blob/main/servers/ss_servers.txt",
+    "https://github.com/MohammadBahemmat/V2ray-Collector/blob/main/servers/hysteria2_servers.txt",
+    "https://sub.vlessfo.ru/vlessforu/working_configs.txt",
+    "https://github.com/abasporghorbanali2061359-debug/vless-clean/blob/main/sub.txt",
+    "https://github.com/aviamastersgh/vpn-free-russia/blob/main/ru_configs.txt",
+    "https://github.com/FLAT447/v2ray-lists/blob/main/BLACK_FULL.txt",
+    "https://github.com/FLAT447/v2ray-lists/blob/main/WHITE_FULL.txt",
+    "https://github.com/MaxFreudDrethe/VCC/blob/main/configs/hysteria2.txt",
+    "https://github.com/MaxFreudDrethe/VCC/blob/main/configs/shadowsocks.txt",
+    "https://github.com/MaxFreudDrethe/VCC/blob/main/configs/grpc.txt",
+    "https://github.com/MaxFreudDrethe/VCC/blob/main/configs/reality.txt",
+    "https://github.com/MaxFreudDrethe/VCC/blob/main/configs/tls.txt",
+    "https://github.com/andry767876/white-vpn-configs/blob/main/all_white_lists.txt",
+    "https://github.com/imnocrew/vpn-configs/blob/master/top100-vless.txt",
+    "https://github.com/imnocrew/vpn-configs/blob/master/top200.txt",
+    "https://github.com/luxxuria/harvester/blob/main/speed_tested.txt",
+    "https://github.com/luxxuria/harvester/blob/main/ping_tested.txt",
+    "https://github.com/luxxuria/harvester/blob/main/non_ru.txt",
+    "https://raw.githack.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta8.txt",
+    "https://raw.githack.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta7.txt",
+    "https://raw.githack.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta6.txt",
+    "https://raw.githack.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta6BL.txt",
+    "https://github.com/Darmioniks/proxy-and-vless-collector/blob/main/vless_filtered.txt",
+    "https://github.com/cybershieldvpn/my-vpn-configs/blob/main/configs/proxy_configs_tested.txt",
 ]
 
 XRAY_BIN = "./xray"
@@ -96,7 +121,7 @@ OUTPUT_FILE = 'subscription'          # локальная копия: сост�
 JSON_FILE = 'stats.json'
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
-LOCAL_SOURCE_FILE = 'my_source'
+# LOCAL_SOURCE_FILE = 'my_source'
 META_FILE = 'run_meta.json'           # nodes/prev_nodes/bytes — для sanity-check в воркфлоу
 
 # ─────────────────────────────────────────────────────────────────────────────

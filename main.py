@@ -1516,6 +1516,10 @@ def get_accurate_ping(ip, port, attempts=3):
     return int(sum(lat) / len(lat))
 
 
+def _is_hysteria2(server):
+    return str(server.get('protocol', '')).strip().lower() == 'hysteria2'
+
+
 def ping_filter(server):
     for _ in range(max(1, PING_ATTEMPTS)):
         try:
@@ -1624,6 +1628,9 @@ def deep_verify(server):
                 _note_xray_error(tun.error)
                 return None, 'xray_start'
             with proxy_session() as ps:
+                # Для Hysteria2 это лёгкий QUIC preflight через уже поднятый Xray-туннель.
+                # При его успехе ниже продолжаются YouTube и speed-check в том же процессе Xray;
+                # отдельный второй Xray-туннель для предварительного probe не запускается.
                 latency, country, probe_source = probe_exit(ps, tun.proxies)
                 if latency is None:
                     return None, 'trace_http'
@@ -1660,7 +1667,10 @@ def deep_verify_with_retry(server):
 def measure_node_stats(server, check_speed=True):
     """STAGE 2. -> (server, ok). При неудаче поля сервера НЕ трогаем (нужно для грейса)."""
     try:
-        tcp_ping = get_accurate_ping(server['ip'], server['port'], attempts=3)
+        is_hy2 = _is_hysteria2(server)
+        # TCP-пинг не измеряет доступность/задержку Hysteria2; для него ниже
+        # используем latency реального HTTP-запроса через Xray/QUIC-туннель.
+        tcp_ping = 9999 if is_hy2 else get_accurate_ping(server['ip'], server['port'], attempts=3)
         with XrayTunnel(server) as tun:
             if tun.config_error:
                 return server, False
@@ -1668,7 +1678,7 @@ def measure_node_stats(server, check_speed=True):
                 _note_xray_error(tun.error)
                 return server, False
             with proxy_session() as ps:
-                _, country, probe_source = probe_exit(
+                probe_latency, country, probe_source = probe_exit(
                     ps, tun.proxies, attempts=2, previous_country=server.get('country')
                 )
                 if country is None:
@@ -1676,7 +1686,9 @@ def measure_node_stats(server, check_speed=True):
                 speed = measure_download_speed(ps, tun.proxies) if check_speed else 0.0
         server['country'] = country
         server['probe_source'] = probe_source
-        if tcp_ping != 9999:
+        if is_hy2:
+            server['real_delay'] = probe_latency
+        elif tcp_ping != 9999:
             server['real_delay'] = tcp_ping
         if check_speed and speed > 0:
             server['speed_mbps'] = speed
@@ -1781,16 +1793,25 @@ def search_github_configs():
 
 def run_ping_stage(servers, label):
     t0 = time.time()
-    alive, dead = [], []
+    # Hysteria2 использует UDP/QUIC: TCP connect к его порту ничего надёжного
+    # не говорит о доступности протокола и не должен удалять узел до Xray-теста.
+    hy2_pending = [s for s in servers if _is_hysteria2(s)]
+    tcp_candidates = [s for s in servers if not _is_hysteria2(s)]
+    tcp_alive, dead = [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=PING_WORKERS) as ex:
-        fm = {ex.submit(ping_filter, s): s for s in servers}
+        fm = {ex.submit(ping_filter, s): s for s in tcp_candidates}
         for f in concurrent.futures.as_completed(fm):
             try:
                 res = f.result()
             except Exception:
                 res = None
-            (alive if res else dead).append(res or fm[f])
-    logger.info(f"✅ {label}: живых {len(alive)} из {len(servers)} за {time.time() - t0:.0f} сек.")
+            (tcp_alive if res else dead).append(res or fm[f])
+    alive = hy2_pending + tcp_alive
+    logger.info(f"✅ {label}: TCP-пинг прошли {len(tcp_alive)} из {len(tcp_candidates)} TCP-узлов "
+                f"за {time.time() - t0:.0f} сек.")
+    if hy2_pending:
+        logger.info(f"   Hysteria2 (UDP/QUIC): TCP-пинг пропущен для {len(hy2_pending)} узлов; "
+                    "доступность проверяется через Xray на следующих этапах.")
     return alive, dead
 
 
@@ -1931,7 +1952,9 @@ def main():
     for s in alive_prev:
         nid = node_id_of(s)
         handled_ids.add(nid)
-        if speed_due_for_check(history, nid) or s.get('speed_mbps', 0) < SPEED_HARD_LIMIT:
+        # Старые Hysteria2 не прошли TCP-пинг (он намеренно пропущен), поэтому
+        # их нужно проверять через Xray, а не считать успешными по одному обходу TCP.
+        if _is_hysteria2(s) or speed_due_for_check(history, nid) or s.get('speed_mbps', 0) < SPEED_HARD_LIMIT:
             prev_recheck.append(s)
         else:
             prev_keep.append(s)
@@ -1957,6 +1980,8 @@ def main():
     tested, failed_prev, untested_prev = [], [], []
     fail_stats = {}
     google_fallback_stage1 = 0
+    hy2_stage1_completed = 0
+    hy2_stage1_passed = 0
     processed = set()
     timed_out = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -1969,6 +1994,8 @@ def main():
             done += 1
             s = fm[f]
             processed.add(f)
+            if _is_hysteria2(s):
+                hy2_stage1_completed += 1
             try:
                 res, reason = f.result()
             except Exception:
@@ -1977,7 +2004,11 @@ def main():
                 tested.append(res)
                 if res.get('probe_source') == 'google-204':
                     google_fallback_stage1 += 1
-                probe_note = " | Google 204 fallback" if res.get('probe_source') == 'google-204' else ""
+                if _is_hysteria2(res):
+                    hy2_stage1_passed += 1
+                    probe_note = f" | Hysteria2 QUIC probe: {res.get('probe_source', 'Xray')}"
+                else:
+                    probe_note = " | Google 204 fallback" if res.get('probe_source') == 'google-204' else ""
                 logger.info(f"   [{res['country']}] {res['protocol'].upper()} | HTTP: {res['real_delay']}ms | {res['speed_mbps']} Mbps{probe_note}")
             else:
                 fail_stats[reason] = fail_stats.get(reason, 0) + 1
@@ -1993,8 +2024,10 @@ def main():
             if f not in processed and s.get('from_prev'):
                 untested_prev.append(s)
 
+    hy2_stage1_candidates = sum(1 for s in to_test if _is_hysteria2(s))
     logger.info(f"📊 ЭТАП 1: {len(to_test)} кандидатов за {time.time() - t1:.0f} сек | прошло {len(tested)} | "
                 f"Google 204 fallback: {google_fallback_stage1} | "
+                f"Hysteria2/QUIC: прошло {hy2_stage1_passed}, завершено {hy2_stage1_completed}/{hy2_stage1_candidates} | "
                 f"отсев: {', '.join(f'{k}={v}' for k, v in sorted(fail_stats.items())) or '—'}")
     if _XRAY_START_ERRORS:
         logger.info("   Причины xray_start (топ-5, из stderr Xray):")
@@ -2044,6 +2077,9 @@ def main():
     verified = list(passthrough)
     dropped_new, grace2 = 0, 0
     google_fallback_stage2 = 0
+    hy2_stage2_completed = 0
+    hy2_stage2_passed = 0
+    hy2_stage2_candidates = sum(1 for s in to_verify if _is_hysteria2(s))
     with concurrent.futures.ThreadPoolExecutor(max_workers=STAGE2_WORKERS) as ex:
         fm = {ex.submit(measure_node_stats, s, check_speed=not s.get('skip_speed', False)): s for s in to_verify}
         done = 0
@@ -2054,6 +2090,10 @@ def main():
                 s, ok = f.result()
             except Exception:
                 ok = False
+            if _is_hysteria2(s):
+                hy2_stage2_completed += 1
+                if ok:
+                    hy2_stage2_passed += 1
             if not ok:
                 if s.get('from_prev') and mark_failure(history, s):
                     s['grace'] = True
@@ -2062,14 +2102,22 @@ def main():
                     dropped_new += 1
                     continue
             verified.append(s)
-            if s.get('probe_source') == 'google-204':
+            if ok and s.get('probe_source') == 'google-204':
                 google_fallback_stage2 += 1
             disp = COUNTRIES_RU.get(s['country'], s['country'])
-            probe_note = " (Google 204 fallback)" if s.get('probe_source') == 'google-204' else ""
-            logger.info(f"   [{done}/{len(to_verify)}] {disp} -> {s.get('real_delay', 0)}ms | {s.get('speed_mbps', 0.0)} Mbps"
+            notes = []
+            if ok and _is_hysteria2(s):
+                notes.append('Hysteria2 QUIC probe')
+            if ok and s.get('probe_source') == 'google-204':
+                notes.append('Google 204 fallback')
+            probe_note = f" ({'; '.join(notes)})" if notes else ""
+            delay_note = "QUIC HTTP" if _is_hysteria2(s) else "задержка"
+            logger.info(f"   [{done}/{len(to_verify)}] {disp} -> {delay_note} {s.get('real_delay', 0)}ms | "
+                        f"{s.get('speed_mbps', 0.0)} Mbps"
                         + (" (грейс)" if s.get('grace') else "") + probe_note)
     logger.info(f"📊 ЭТАП 2: {time.time() - t2:.0f} сек | отсеяно {dropped_new}, в грейс {grace2} | "
-                f"Google 204 fallback: {google_fallback_stage2}")
+                f"Google 204 fallback: {google_fallback_stage2} | "
+                f"Hysteria2/QUIC: прошло {hy2_stage2_passed}, завершено {hy2_stage2_completed}/{hy2_stage2_candidates}")
 
     verified.sort(key=lambda x: (0 if x.get('from_prev') else 1, x.get('real_delay', 9999), -x.get('score', 0)))
 
@@ -2084,11 +2132,15 @@ def main():
     for s in verified:
         country = COUNTRIES_RU.get(s['country'], f"🏳️ {s['country']}")
         star = "🌟" if history.get(node_id_of(s), {}).get("streak", 0) >= 3 else ""
-        name = f"{star}{get_speed_badge(s['speed_mbps'])}{country} [Ping:{s.get('real_delay', 0)}ms|Speed:{s.get('speed_mbps', 0.0)}Mbps]"
+        is_hy2 = _is_hysteria2(s)
+        latency_label = "QUIC-HTTP" if is_hy2 else "Ping"
+        name = f"{star}{get_speed_badge(s['speed_mbps'])}{country} [{latency_label}:{s.get('real_delay', 0)}ms|Speed:{s.get('speed_mbps', 0.0)}Mbps]"
         result_links.append(f"{s['original'].split('#')[0]}#{quote(name)}")
         json_stats["servers"].append({
-            "name": name, "ip": s['ip'], "ping": s.get('real_delay', 0), "speed_mbps": s.get('speed_mbps', 0.0),
-            "score": s.get('score', 0), "country": s.get('country', 'XX'),
+            "name": name, "ip": s['ip'], "ping": s.get('real_delay', 0),
+            "latency_method": "http-over-quic" if is_hy2 else "tcp-or-http",
+            "speed_mbps": s.get('speed_mbps', 0.0), "score": s.get('score', 0),
+            "country": s.get('country', 'XX'),
             "protocol": f"{s['protocol']} {s.get('security', '')}".strip(),
         })
 

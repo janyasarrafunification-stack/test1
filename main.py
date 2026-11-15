@@ -121,7 +121,7 @@ OUTPUT_FILE = 'subscription'          # локальная копия: сост�
 JSON_FILE = 'stats.json'
 HISTORY_FILE = 'stats_history.json'
 COUNTRIES_FILE = 'countries.json'
-# LOCAL_SOURCE_FILE = 'my_source'
+LOCAL_SOURCE_FILE = 'my_source'
 META_FILE = 'run_meta.json'           # nodes/prev_nodes/bytes — для sanity-check в воркфлоу
 
 # ─────────────────────────────────────────────────────────────────────────────

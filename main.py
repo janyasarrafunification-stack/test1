@@ -1135,7 +1135,7 @@ def get_latest_xray_version():
     if pinned:
         return pinned.lstrip("v")
     # Зафиксирован выбранный релиз Xray; меняйте только при явном обновлении версии.
-    return "26.9.30"
+    return "26.11.9"
 
 
 def install_xray_core():

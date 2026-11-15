@@ -104,6 +104,8 @@ jobs:
           TOKEN: ${{ github.token }}                       # раньше не передавался -> GitHub Search всегда в rate-limit
           V1A_XRAY_VERSION: ${{ steps.xray.outputs.version }}  # скрипт не дёргает API и не удалит рабочий бинарник
           V1A_RUN_BUDGET_SEC: '1500'
+          V1A_SUB_KEY: ${{ secrets.V1A_SUB_KEY }}
+          V1A_HISTORY_KEY: ${{ secrets.V1A_HISTORY_KEY }}
           PYTHONUNBUFFERED: '1'
         run: |
           chmod +x ./xray
